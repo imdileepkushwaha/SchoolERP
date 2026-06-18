@@ -1,10 +1,11 @@
 <?php
-// admin/students.php
 $page_title = "Student List";
 require_once 'includes/header.php';
 require_once '../includes/db_connect.php';
+require_once 'includes/student_helpers.php';
 
-// Fetch students from the database
+ensureStudentSchema($pdo);
+
 try {
     $stmt = $pdo->query("SELECT * FROM students ORDER BY id ASC");
     $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -13,19 +14,30 @@ try {
 }
 ?>
 
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-    <div>
-        <h2 style="color: var(--text-dark); margin-bottom: 5px; font-size: 1.5rem; font-weight: 600;">Student List</h2>
-        <div style="color: var(--text-muted); font-size: 0.9rem;">Dashboard / Student List</div>
+<div class="content-top-bar">
+    <div class="content-top-main">
+        <div class="content-top-icon"><i class="fas fa-user-graduate"></i></div>
+        <div class="content-top-title">
+            <h2>Student List</h2>
+            <p class="content-top-breadcrumb">
+                <a href="dashboard.php">Dashboard</a>
+                <i class="fas fa-chevron-right"></i>
+                <span>Student List</span>
+            </p>
+        </div>
     </div>
-    <button class="btn-admin" style="background-color: var(--green-active); width: auto; padding: 10px 20px; border-radius: 6px;"><i class="fas fa-plus"></i> Add Student</button>
+    <div class="content-top-actions">
+        <a href="student_import.php" class="btn-header-action btn-header-outline"><i class="fas fa-file-import"></i> Import</a>
+        <a href="student_promote.php" class="btn-header-action btn-header-outline"><i class="fas fa-arrow-up"></i> Promote</a>
+        <a href="student_add.php" class="btn-header-action btn-header-primary"><i class="fas fa-plus"></i> Add Student</a>
+    </div>
 </div>
 
 <div class="table-container">
     <div class="table-toolbar">
         <div class="toolbar-left">
-            <a href="student_export.php" class="toolbar-btn" style="text-decoration: none; color: var(--text-dark);">
-                <i class="far fa-file-excel" style="color: #10b981;"></i> Export to Excel
+            <a href="student_export.php" class="toolbar-btn toolbar-link-plain">
+                <i class="far fa-file-excel icon-excel"></i> Export to Excel
             </a>
             <div class="toolbar-search">
                 <i class="fas fa-search"></i>
@@ -34,9 +46,9 @@ try {
         </div>
         <div class="toolbar-right">
             <button class="toolbar-btn">
-                Filter <i class="fas fa-chevron-down" style="font-size: 0.7rem; margin-left: 5px;"></i>
+                Filter <i class="fas fa-chevron-down icon-chevron-xs"></i>
             </button>
-            <div style="display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 0.9rem;">
+            <div class="toolbar-rows-wrap">
                 Rows per page:
                 <select class="toolbar-select" id="rowsPerPageSelect">
                     <option value="10">10</option>
@@ -53,13 +65,13 @@ try {
         <table>
             <thead>
                 <tr>
-                    <th style="width: 40px;"><input type="checkbox" class="custom-checkbox" id="selectAll"></th>
-                    <th>S.L <i class="fas fa-sort" style="color: #cbd5e1; margin-left: 5px; font-size: 0.8rem;"></i></th>
+                    <th class="th-w-check"><input type="checkbox" class="custom-checkbox" id="selectAll"></th>
+                    <th>S.L <i class="fas fa-sort icon-sort-muted"></i></th>
                     <th>Admission No</th>
-                    <th>Name <i class="fas fa-sort" style="color: #cbd5e1; margin-left: 5px; font-size: 0.8rem;"></i></th>
-                    <th>Class <i class="fas fa-sort" style="color: #cbd5e1; margin-left: 5px; font-size: 0.8rem;"></i></th>
-                    <th>Mobile Number <i class="fas fa-sort" style="color: #cbd5e1; margin-left: 5px; font-size: 0.8rem;"></i></th>
-                    <th>Status <i class="fas fa-sort" style="color: #cbd5e1; margin-left: 5px; font-size: 0.8rem;"></i></th>
+                    <th>Name <i class="fas fa-sort icon-sort-muted"></i></th>
+                    <th>Class <i class="fas fa-sort icon-sort-muted"></i></th>
+                    <th>Mobile Number <i class="fas fa-sort icon-sort-muted"></i></th>
+                    <th>Status <i class="fas fa-sort icon-sort-muted"></i></th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -68,17 +80,19 @@ try {
                 <tr class="student-row">
                     <td><input type="checkbox" class="custom-checkbox row-checkbox" value="<?php echo $student['id']; ?>"></td>
                     <td><?php echo str_pad($student['id'], 2, '0', STR_PAD_LEFT); ?></td>
-                    <td><a href="#" class="teal-link"><?php echo htmlspecialchars($student['ad_no']); ?></a></td>
+                    <td><a href="student_view.php?id=<?php echo $student['id']; ?>" class="teal-link"><?php echo htmlspecialchars($student['ad_no']); ?></a></td>
                     <td>
                         <div class="student-name-cell">
-                            <img src="https://ui-avatars.com/api/?name=<?php echo urlencode($student['name']); ?>&background=random" alt="Avatar">
+                            <img src="<?php echo htmlspecialchars(getStudentPhotoUrl($student)); ?>" alt="Avatar">
                             <div class="name-info">
                                 <strong><?php echo htmlspecialchars($student['name']); ?></strong>
                                 <span>Roll No: <?php echo htmlspecialchars($student['roll']); ?></span>
                             </div>
                         </div>
                     </td>
-                    <td><?php echo htmlspecialchars($student['class']); ?></td>
+                    <td><?php
+                        echo htmlspecialchars($student['class'] . (!empty($student['section']) ? ' (' . $student['section'] . ')' : ''));
+                    ?></td>
                     <td><?php echo htmlspecialchars($student['mobile']); ?></td>
                     <td>
                         <span class="status-badge <?php echo $student['status'] == 'Active' ? 'badge-active' : 'badge-inactive'; ?>">
@@ -86,7 +100,10 @@ try {
                         </span>
                     </td>
                     <td>
-                        <div style="display: flex; gap: 8px;">
+                        <div class="table-actions-row">
+                            <a href="student_id_card.php?id=<?php echo $student['id']; ?>" class="action-btn view-btn" title="ID Card" target="_blank">
+                                <i class="fas fa-id-card"></i>
+                            </a>
                             <a href="student_view.php?id=<?php echo $student['id']; ?>" class="action-btn view-btn" title="View">
                                 <i class="fas fa-eye"></i>
                             </a>
@@ -101,10 +118,10 @@ try {
                 </tr>
                 <?php endforeach; ?>
                 
-                <tr id="noResultsRow" style="display: none;">
+                <tr id="noResultsRow" class="row-hidden">
                     <td colspan="8" class="no-results-cell">
-                        <div class="empty-state" style="padding: 40px 20px;">
-                            <i class="fas fa-search empty-state-icon" style="font-size: 3rem;"></i>
+                        <div class="empty-state empty-state-md">
+                            <i class="fas fa-search empty-state-icon empty-search-icon"></i>
                             <h3>No matching records found</h3>
                             <p>We couldn't find any students matching your search criteria.</p>
                         </div>
@@ -117,9 +134,9 @@ try {
             <i class="fas fa-user-graduate empty-state-icon"></i>
             <h3>No Students Found</h3>
             <p>It looks like there are currently no students in the database. Add a new student to start managing their records here.</p>
-            <button class="btn-admin" style="width: auto; padding: 10px 20px; border-radius: 6px;">
+            <a href="student_add.php" class="btn-header-action btn-header-primary">
                 <i class="fas fa-plus"></i> Add First Student
-            </button>
+            </a>
         </div>
         <?php endif; ?>
     </div>
@@ -130,11 +147,11 @@ try {
             Showing 1 to <?php echo count($students); ?> of <?php echo count($students); ?> entries
         </div>
         <div class="pagination">
-            <div class="page-item"><i class="fas fa-angle-double-left" style="font-size: 0.7rem;"></i></div>
-            <div class="page-item"><i class="fas fa-angle-left" style="font-size: 0.8rem;"></i></div>
+            <div class="page-item"><i class="fas fa-angle-double-left page-nav-icon-xs"></i></div>
+            <div class="page-item"><i class="fas fa-angle-left page-nav-icon-sm"></i></div>
             <div class="page-item active">1</div>
-            <div class="page-item"><i class="fas fa-angle-right" style="font-size: 0.8rem;"></i></div>
-            <div class="page-item"><i class="fas fa-angle-double-right" style="font-size: 0.7rem;"></i></div>
+            <div class="page-item"><i class="fas fa-angle-right page-nav-icon-sm"></i></div>
+            <div class="page-item"><i class="fas fa-angle-double-right page-nav-icon-xs"></i></div>
         </div>
     </div>
     <?php endif; ?>
@@ -205,9 +222,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Show/Hide no results row
         if (noResultsRow) {
             if (matchCount === 0 && tableRows.length > 0) {
-                noResultsRow.style.display = '';
+                noResultsRow.classList.remove('row-hidden');
             } else {
-                noResultsRow.style.display = 'none';
+                noResultsRow.classList.add('row-hidden');
             }
         }
 

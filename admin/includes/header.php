@@ -1,14 +1,6 @@
 <?php
 // admin/includes/header.php
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// Check authentication
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header('Location: index.php');
-    exit;
-}
+require_once __DIR__ . '/init.php';
 
 $page_title = $page_title ?? 'Dashboard';
 $admin_name = htmlspecialchars(ucfirst($_SESSION['admin_username']));
@@ -78,7 +70,7 @@ $avatar_url = 'https://ui-avatars.com/api/?name=' . urlencode($_SESSION['admin_u
                         </div>
                         <ul class="dropdown-menu">
                             <li><a href="#"><i class="fas fa-user"></i> My Profile</a></li>
-                            <li><a href="#"><i class="fas fa-cog"></i> Settings</a></li>
+                            <li><a href="settings.php"><i class="fas fa-cog"></i> Settings</a></li>
                             <li><a href="../index.php"><i class="fas fa-globe"></i> View Website</a></li>
                         </ul>
                         <div class="dropdown-footer">
