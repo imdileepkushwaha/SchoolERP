@@ -86,6 +86,7 @@ function ensureTeacherSchema($pdo) {
         'portal_enabled'       => "TINYINT(1) NOT NULL DEFAULT 0",
         'portal_password'      => "VARCHAR(255) DEFAULT NULL",
         'portal_must_change'   => "TINYINT(1) NOT NULL DEFAULT 0",
+        'signature'            => "VARCHAR(255) DEFAULT NULL",
     ];
     foreach ($portalCols as $col => $def) {
         try {
@@ -202,6 +203,54 @@ function getTeacherById($pdo, $id) {
     $stmt = $pdo->prepare("SELECT * FROM teachers WHERE id = ?");
     $stmt->execute([(int) $id]);
     return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function getClassTeacherForClass($pdo, $className, $sectionName = null) {
+    ensureTeacherSchema($pdo);
+    $className = trim((string) $className);
+    if ($className === '') {
+        return null;
+    }
+    $section = trim((string) $sectionName);
+    if ($section !== '') {
+        $stmt = $pdo->prepare(
+            "SELECT * FROM teachers
+             WHERE status = 'Active' AND class_assigned = ? AND (section_assigned = ? OR section_assigned IS NULL OR section_assigned = '')
+             ORDER BY (section_assigned = ?) DESC, id ASC LIMIT 1"
+        );
+        $stmt->execute([$className, $section, $section]);
+    } else {
+        $stmt = $pdo->prepare("SELECT * FROM teachers WHERE status = 'Active' AND class_assigned = ? ORDER BY id ASC LIMIT 1");
+        $stmt->execute([$className]);
+    }
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function uploadTeacherSignature($file, $employeeId) {
+    if (empty($file['name']) || $file['error'] !== UPLOAD_ERR_OK) {
+        return null;
+    }
+    $allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    if (!in_array($mime, $allowed, true)) {
+        return false;
+    }
+    if ($file['size'] > 2 * 1024 * 1024) {
+        return false;
+    }
+    $dir = __DIR__ . '/../uploads/signatures/';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    $extMap = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    $ext = $extMap[$mime] ?? 'png';
+    $filename = 'tsign_' . preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $employeeId) . '_' . time() . '.' . $ext;
+    if (move_uploaded_file($file['tmp_name'], $dir . $filename)) {
+        return 'uploads/signatures/' . $filename;
+    }
+    return false;
 }
 
 function getAllTeachers($pdo, $activeOnly = false) {
@@ -488,6 +537,114 @@ function updateTeacherPortalPassword($pdo, $teacherId, $newPassword) {
     $pdo->prepare(
         "UPDATE teachers SET portal_password = ?, portal_must_change = 0 WHERE id = ? AND portal_enabled = 1"
     )->execute([$hash, (int) $teacherId]);
+}
+
+function getTeacherAttendanceRecord($pdo, $teacherId, $date) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM teacher_attendance WHERE teacher_id = ? AND attendance_date = ?");
+    $stmt->execute([(int) $teacherId, $date]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function getTeacherAttendanceForMonth($pdo, $teacherId, $year, $month) {
+    ensureErpSchema($pdo);
+    $from = sprintf('%04d-%02d-01', $year, $month);
+    $to = date('Y-m-t', strtotime($from));
+    $stmt = $pdo->prepare(
+        "SELECT * FROM teacher_attendance WHERE teacher_id = ? AND attendance_date BETWEEN ? AND ? ORDER BY attendance_date DESC"
+    );
+    $stmt->execute([(int) $teacherId, $from, $to]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function teacherSelfCheckIn($pdo, $teacherId, $status = 'Present', $remarks = null) {
+    ensureErpSchema($pdo);
+    $today = date('Y-m-d');
+    $now = date('H:i:s');
+    if (!in_array($status, ['Present', 'Late'], true)) {
+        return ['ok' => false, 'error' => 'Invalid check-in status.'];
+    }
+    $existing = getTeacherAttendanceRecord($pdo, $teacherId, $today);
+    $note = trim((string) $remarks);
+    if ($note === '') {
+        $note = 'Self check-in via portal';
+    }
+    if ($existing) {
+        if (!empty($existing['check_in_time'])) {
+            return ['ok' => false, 'error' => 'You have already checked in today.'];
+        }
+        $pdo->prepare(
+            "UPDATE teacher_attendance SET check_in_time = ?, status = ?, remarks = ? WHERE teacher_id = ? AND attendance_date = ?"
+        )->execute([$now, $status, $note, (int) $teacherId, $today]);
+        return ['ok' => true, 'time' => $now];
+    }
+    $pdo->prepare(
+        "INSERT INTO teacher_attendance (teacher_id, attendance_date, status, remarks, check_in_time) VALUES (?,?,?,?,?)"
+    )->execute([(int) $teacherId, $today, $status, $note, $now]);
+    return ['ok' => true, 'time' => $now];
+}
+
+function teacherSelfCheckOut($pdo, $teacherId, $remarks = null) {
+    ensureErpSchema($pdo);
+    $today = date('Y-m-d');
+    $now = date('H:i:s');
+    $existing = getTeacherAttendanceRecord($pdo, $teacherId, $today);
+    if (!$existing || empty($existing['check_in_time'])) {
+        return ['ok' => false, 'error' => 'Please check in first before checking out.'];
+    }
+    if (!empty($existing['check_out_time'])) {
+        return ['ok' => false, 'error' => 'You have already checked out today.'];
+    }
+    $note = trim((string) $remarks);
+    $remarksFinal = $existing['remarks'] ?? '';
+    if ($note !== '') {
+        $remarksFinal = trim($remarksFinal . ($remarksFinal ? ' · ' : '') . 'Check-out: ' . $note);
+    }
+    $pdo->prepare(
+        "UPDATE teacher_attendance SET check_out_time = ?, remarks = ? WHERE teacher_id = ? AND attendance_date = ?"
+    )->execute([$now, $remarksFinal ?: null, (int) $teacherId, $today]);
+    return ['ok' => true, 'time' => $now];
+}
+
+function parseTeacherAttTimeToSeconds($time) {
+    if ($time === null || trim((string) $time) === '') {
+        return null;
+    }
+    $time = trim((string) $time);
+    if (preg_match('/(?:\d{4}-\d{2}-\d{2}\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?/', $time, $m)) {
+        return ((int) $m[1]) * 3600 + ((int) $m[2]) * 60 + (int) ($m[3] ?? 0);
+    }
+    return null;
+}
+
+function formatTeacherAttTime($time) {
+    $secs = parseTeacherAttTimeToSeconds($time);
+    if ($secs === null) {
+        return '—';
+    }
+    $h = (int) floor($secs / 3600) % 24;
+    $min = (int) floor(($secs % 3600) / 60);
+    $ampm = $h >= 12 ? 'PM' : 'AM';
+    $h12 = $h % 12;
+    if ($h12 === 0) {
+        $h12 = 12;
+    }
+    return sprintf('%d:%02d %s', $h12, $min, $ampm);
+}
+
+function teacherAttendanceWorkDuration($checkIn, $checkOut) {
+    $inSecs = parseTeacherAttTimeToSeconds($checkIn);
+    $outSecs = parseTeacherAttTimeToSeconds($checkOut);
+    if ($inSecs === null || $outSecs === null || $outSecs < $inSecs) {
+        return null;
+    }
+    $secs = $outSecs - $inSecs;
+    $h = (int) floor($secs / 3600);
+    $m = (int) floor(($secs % 3600) / 60);
+    if ($h > 0) {
+        return $h . 'h ' . $m . 'm';
+    }
+    return $m . 'm';
 }
 
 if (!function_exists('displayVal')) {

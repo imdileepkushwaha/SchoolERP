@@ -117,13 +117,19 @@ require_once 'includes/header.php';
 
 $classes = getAllClasses($pdo);
 $sectionsByClass = [];
+$totalSections = 0;
+$activeClasses = 0;
 foreach ($classes as $cls) {
     $sectionsByClass[$cls['id']] = getSectionsForClassId($pdo, $cls['id']);
+    $totalSections += count($sectionsByClass[$cls['id']]);
+    if ($cls['status'] === 'Active') {
+        $activeClasses++;
+    }
 }
 ?>
 <div class="content-top-bar">
     <div class="content-top-main">
-        <div class="content-top-icon icon-teal"><i class="fas fa-list-ul"></i></div>
+        <div class="content-top-icon icon-teal"><i class="fas fa-school"></i></div>
         <div class="content-top-title">
             <h2>Classes & Sections</h2>
             <p class="content-top-breadcrumb">
@@ -135,6 +141,21 @@ foreach ($classes as $cls) {
     </div>
     <div class="content-top-actions">
         <a href="students.php" class="btn-header-action btn-header-outline"><i class="fas fa-user-graduate"></i> Students</a>
+    </div>
+</div>
+
+<div class="cls-stat-strip">
+    <div class="cls-stat-card">
+        <div class="cls-stat-icon"><i class="fas fa-layer-group"></i></div>
+        <div><span>Total Classes</span><strong><?php echo count($classes); ?></strong></div>
+    </div>
+    <div class="cls-stat-card">
+        <div class="cls-stat-icon cls-stat-green"><i class="fas fa-check-circle"></i></div>
+        <div><span>Active</span><strong><?php echo $activeClasses; ?></strong></div>
+    </div>
+    <div class="cls-stat-card">
+        <div class="cls-stat-icon cls-stat-blue"><i class="fas fa-table-columns"></i></div>
+        <div><span>Total Sections</span><strong><?php echo $totalSections; ?></strong></div>
     </div>
 </div>
 
@@ -209,27 +230,48 @@ foreach ($classes as $cls) {
                     <td colspan="7">
                         <div class="class-sections-panel">
                             <div class="class-sections-header">
-                                <strong><i class="fas fa-table-columns"></i> Sections — <?php echo htmlspecialchars($cls['name']); ?></strong>
+                                <div class="class-sections-title">
+                                    <span class="class-sections-icon"><i class="fas fa-table-columns"></i></span>
+                                    <div>
+                                        <strong>Sections</strong>
+                                        <span><?php echo htmlspecialchars($cls['name']); ?> · <?php echo count($sections); ?> section(s)</span>
+                                    </div>
+                                </div>
                                 <form method="POST" class="section-add-inline">
                                     <input type="hidden" name="action" value="add_section">
                                     <input type="hidden" name="class_id" value="<?php echo $cls['id']; ?>">
-                                    <input type="text" name="section_name" class="form-input section-add-input" placeholder="e.g. E" maxlength="10" required>
-                                    <button type="submit" class="btn-header-action btn-header-outline btn-sm"><i class="fas fa-plus"></i> Add</button>
+                                    <label class="section-add-label">Add section</label>
+                                    <div class="section-add-field">
+                                        <input type="text" name="section_name" class="form-input section-add-input" placeholder="E" maxlength="10" required title="Section letter e.g. E">
+                                        <button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-plus"></i> Add</button>
+                                    </div>
                                 </form>
                             </div>
                             <?php if (empty($sections)): ?>
-                            <p class="class-sections-empty">No sections yet. Add one above.</p>
+                            <div class="class-sections-empty">
+                                <i class="fas fa-inbox"></i>
+                                <p>No sections yet. Add a section letter above (e.g. A, B, E).</p>
+                            </div>
                             <?php else: ?>
                             <div class="section-chips">
-                                <?php foreach ($sections as $sec): ?>
-                                <div class="section-chip">
-                                    <input type="text" name="name" form="sec-update-<?php echo $sec['id']; ?>" class="form-input section-chip-input" value="<?php echo htmlspecialchars($sec['name']); ?>" maxlength="10">
-                                    <select name="status" form="sec-update-<?php echo $sec['id']; ?>" class="form-input form-select section-chip-select">
-                                        <option value="Active" <?php echo $sec['status'] === 'Active' ? 'selected' : ''; ?>>Active</option>
-                                        <option value="Inactive" <?php echo $sec['status'] === 'Inactive' ? 'selected' : ''; ?>>Inactive</option>
-                                    </select>
-                                    <button type="submit" form="sec-update-<?php echo $sec['id']; ?>" class="action-btn edit-btn" title="Save"><i class="fas fa-save"></i></button>
-                                    <button type="submit" form="sec-delete-<?php echo $sec['id']; ?>" class="action-btn delete-btn" title="Delete" onclick="return confirm('Delete this section?');"><i class="fas fa-times"></i></button>
+                                <?php foreach ($sections as $sec):
+                                    $isActive = $sec['status'] === 'Active';
+                                ?>
+                                <div class="section-chip <?php echo $isActive ? 'is-active' : 'is-inactive'; ?>">
+                                    <div class="section-chip-badge" aria-hidden="true"><?php echo htmlspecialchars($sec['name']); ?></div>
+                                    <div class="section-chip-main">
+                                        <label class="section-chip-label">Name</label>
+                                        <input type="text" name="name" form="sec-update-<?php echo $sec['id']; ?>" class="form-input section-chip-input" value="<?php echo htmlspecialchars($sec['name']); ?>" maxlength="10" aria-label="Section name">
+                                        <label class="section-chip-label">Status</label>
+                                        <select name="status" form="sec-update-<?php echo $sec['id']; ?>" class="form-input form-select section-chip-select section-chip-status-<?php echo $isActive ? 'active' : 'inactive'; ?>" aria-label="Section status">
+                                            <option value="Active" <?php echo $isActive ? 'selected' : ''; ?>>Active</option>
+                                            <option value="Inactive" <?php echo !$isActive ? 'selected' : ''; ?>>Inactive</option>
+                                        </select>
+                                    </div>
+                                    <div class="section-chip-actions">
+                                        <button type="submit" form="sec-update-<?php echo $sec['id']; ?>" class="section-chip-btn section-chip-btn-save" title="Save section"><i class="fas fa-check"></i></button>
+                                        <button type="submit" form="sec-delete-<?php echo $sec['id']; ?>" class="section-chip-btn section-chip-btn-delete" title="Delete section" onclick="return confirm('Delete section <?php echo htmlspecialchars($sec['name']); ?>?');"><i class="fas fa-trash-alt"></i></button>
+                                    </div>
                                 </div>
                                 <?php endforeach; ?>
                             </div>
@@ -265,5 +307,28 @@ foreach ($classes as $cls) {
     <input type="hidden" name="id" value="<?php echo $sec['id']; ?>">
 </form>
 <?php endforeach; endforeach; ?>
+
+<script>
+document.querySelectorAll('.section-chip-select').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+        var chip = this.closest('.section-chip');
+        if (!chip) return;
+        var active = this.value === 'Active';
+        chip.classList.toggle('is-active', active);
+        chip.classList.toggle('is-inactive', !active);
+        this.classList.toggle('section-chip-status-active', active);
+        this.classList.toggle('section-chip-status-inactive', !active);
+    });
+});
+
+document.querySelectorAll('.section-chip-input').forEach(function (input) {
+    input.addEventListener('input', function () {
+        var badge = this.closest('.section-chip') && this.closest('.section-chip').querySelector('.section-chip-badge');
+        if (badge) {
+            badge.textContent = this.value.trim().toUpperCase() || '?';
+        }
+    });
+});
+</script>
 
 <?php require_once 'includes/footer.php'; ?>

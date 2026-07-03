@@ -6,18 +6,125 @@ require_once 'includes/settings_helpers.php';
 
 ensureSettingsSchema($pdo);
 
-$activeTab = $_GET['tab'] ?? 'email';
-$allowedTabs = ['email', 'sms', 'whatsapp', 'password'];
+$activeTab = $_GET['tab'] ?? 'school';
+$allowedTabs = ['school', 'signatures', 'email', 'sms', 'whatsapp', 'password'];
 if (!in_array($activeTab, $allowedTabs, true)) {
-    $activeTab = 'email';
+    $activeTab = 'school';
 }
 
 $smtp = getSmtpSettings($pdo);
 $sms = getSmsSettings($pdo);
 $whatsapp = getWhatsAppSettings($pdo);
+$school = getSchoolProfile($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+
+    if ($action === 'save_school') {
+        $profile = [
+            'name' => $_POST['school_name'] ?? '',
+            'tagline' => $_POST['school_tagline'] ?? '',
+            'address' => $_POST['school_address'] ?? '',
+            'phone' => $_POST['school_phone'] ?? '',
+            'email' => $_POST['school_email'] ?? '',
+            'website' => $_POST['school_website'] ?? '',
+            'principal' => $_POST['school_principal'] ?? '',
+            'affiliation' => $_POST['school_affiliation'] ?? '',
+        ];
+        $current = getSchoolProfile($pdo);
+        $profile['logo'] = $current['logo'];
+        $profile['favicon'] = $current['favicon'];
+
+        if (!empty($_POST['remove_logo'])) {
+            deleteSchoolBrandingFile($profile['logo']);
+            $profile['logo'] = '';
+        } elseif (!empty($_FILES['school_logo']['name'])) {
+            $uploaded = uploadSchoolBrandingFile($_FILES['school_logo'], 'logo');
+            if ($uploaded === false) {
+                $_SESSION['error_msg'] = 'Logo upload failed. Use JPG, PNG, WEBP or GIF (max 2MB).';
+                header('Location: settings.php?tab=school');
+                exit;
+            }
+            if ($uploaded) {
+                deleteSchoolBrandingFile($current['logo']);
+                $profile['logo'] = $uploaded;
+            }
+        }
+
+        if (!empty($_POST['remove_favicon'])) {
+            deleteSchoolBrandingFile($profile['favicon']);
+            $profile['favicon'] = '';
+        } elseif (!empty($_FILES['school_favicon']['name'])) {
+            $uploaded = uploadSchoolBrandingFile($_FILES['school_favicon'], 'favicon');
+            if ($uploaded === false) {
+                $_SESSION['error_msg'] = 'Favicon upload failed. Use ICO, PNG or JPG (max 512KB).';
+                header('Location: settings.php?tab=school');
+                exit;
+            }
+            if ($uploaded) {
+                deleteSchoolBrandingFile($current['favicon']);
+                $profile['favicon'] = $uploaded;
+            }
+        }
+
+        saveSchoolProfile($pdo, $profile);
+        $_SESSION['success_msg'] = 'School profile saved.';
+        header('Location: settings.php?tab=school');
+        exit;
+    }
+
+    if ($action === 'save_signature') {
+        $sigId = (int) ($_POST['sig_id'] ?? 0);
+        $name = trim($_POST['sig_name'] ?? '');
+        $designation = trim($_POST['sig_designation'] ?? '');
+        if ($name === '' || $designation === '') {
+            $_SESSION['error_msg'] = 'Signatory name and designation are required.';
+            header('Location: settings.php?tab=signatures');
+            exit;
+        }
+        $data = [
+            'name' => $name,
+            'designation' => $designation,
+            'sort_order' => (int) ($_POST['sig_sort_order'] ?? 0),
+            'status' => ($_POST['sig_status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active',
+        ];
+        $existing = $sigId ? getAuthoritySignatureById($pdo, $sigId) : null;
+        if (!empty($_FILES['sig_image']['name'])) {
+            $uploaded = uploadSignatureFile($_FILES['sig_image']);
+            if ($uploaded === false) {
+                $_SESSION['error_msg'] = 'Signature upload failed. Use a transparent PNG, JPG or WEBP (max 2MB).';
+                header('Location: settings.php?tab=signatures');
+                exit;
+            }
+            if ($uploaded) {
+                if ($existing && !empty($existing['signature'])) {
+                    deleteSchoolBrandingFile($existing['signature']);
+                }
+                $data['signature'] = $uploaded;
+            }
+        }
+        $savedId = saveAuthoritySignature($pdo, $sigId, $data);
+        if (!empty($_POST['sig_make_default'])) {
+            setDefaultAuthoritySignature($pdo, $savedId);
+        }
+        $_SESSION['success_msg'] = $sigId ? 'Signatory updated.' : 'Signatory added.';
+        header('Location: settings.php?tab=signatures');
+        exit;
+    }
+
+    if ($action === 'delete_signature') {
+        deleteAuthoritySignature($pdo, (int) ($_POST['sig_id'] ?? 0));
+        $_SESSION['success_msg'] = 'Signatory removed.';
+        header('Location: settings.php?tab=signatures');
+        exit;
+    }
+
+    if ($action === 'default_signature') {
+        setDefaultAuthoritySignature($pdo, (int) ($_POST['sig_id'] ?? 0));
+        $_SESSION['success_msg'] = 'Default signatory updated.';
+        header('Location: settings.php?tab=signatures');
+        exit;
+    }
 
     if ($action === 'save_smtp') {
         saveSettingsGroup($pdo, [
@@ -151,6 +258,14 @@ require_once 'includes/header.php';
 $smtp = getSmtpSettings($pdo);
 $sms = getSmsSettings($pdo);
 $whatsapp = getWhatsAppSettings($pdo);
+$school = getSchoolProfile($pdo);
+$logoPreviewUrl = schoolBrandingUrl($school['logo'] ?? '', 'admin');
+$faviconPreviewUrl = schoolBrandingUrl($school['favicon'] ?? '', 'admin');
+$signatures = getAuthoritySignatures($pdo);
+$editSig = null;
+if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
+    $editSig = getAuthoritySignatureById($pdo, (int) $_GET['edit']);
+}
 ?>
 <div class="content-top-bar">
     <div class="content-top-main">
@@ -168,6 +283,14 @@ $whatsapp = getWhatsAppSettings($pdo);
 
 <div class="settings-layout">
     <aside class="settings-vtabs" role="tablist">
+        <a href="settings.php?tab=school" class="settings-vtab <?php echo $activeTab === 'school' ? 'active' : ''; ?>">
+            <span class="settings-vtab-icon"><i class="fas fa-school"></i></span>
+            <span class="settings-vtab-text"><strong>School Profile</strong><small>Name, address &amp; branding</small></span>
+        </a>
+        <a href="settings.php?tab=signatures" class="settings-vtab <?php echo $activeTab === 'signatures' ? 'active' : ''; ?>">
+            <span class="settings-vtab-icon"><i class="fas fa-signature"></i></span>
+            <span class="settings-vtab-text"><strong>Signatures</strong><small>Principal &amp; authorities</small></span>
+        </a>
         <a href="settings.php?tab=email" class="settings-vtab <?php echo $activeTab === 'email' ? 'active' : ''; ?>">
             <span class="settings-vtab-icon"><i class="fas fa-envelope"></i></span>
             <span class="settings-vtab-text"><strong>Email SMTP</strong><small>Outgoing mail server</small></span>
@@ -187,6 +310,140 @@ $whatsapp = getWhatsAppSettings($pdo);
     </aside>
 
     <div class="settings-panels">
+        <?php if ($activeTab === 'school'): ?>
+        <div class="settings-panel active">
+            <div class="settings-panel-head">
+                <h3>School Profile</h3>
+                <p>Used on report cards, ID cards, certificates and dashboard.</p>
+            </div>
+            <form method="POST" class="settings-form" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="save_school">
+                <div class="settings-branding-block">
+                    <h4><i class="fas fa-palette"></i> Logo &amp; Favicon</h4>
+                    <p>Shown in admin sidebar, login pages, certificates, ID cards and browser tab.</p>
+                    <div class="settings-branding-grid">
+                        <div class="settings-brand-card">
+                            <label>School Logo</label>
+                            <div class="settings-brand-preview<?php echo $logoPreviewUrl ? ' has-image' : ''; ?>">
+                                <?php if ($logoPreviewUrl): ?>
+                                <img src="<?php echo htmlspecialchars($logoPreviewUrl); ?>" alt="School logo">
+                                <?php else: ?>
+                                <span class="settings-brand-placeholder"><i class="fas fa-image"></i> No logo</span>
+                                <?php endif; ?>
+                            </div>
+                            <input type="file" name="school_logo" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif">
+                            <span class="field-hint">PNG or JPG, max 2MB. Square or wide logo works best.</span>
+                            <?php if ($logoPreviewUrl): ?>
+                            <label class="settings-remove-check"><input type="checkbox" name="remove_logo" value="1"> Remove current logo</label>
+                            <?php endif; ?>
+                        </div>
+                        <div class="settings-brand-card">
+                            <label>Favicon</label>
+                            <div class="settings-brand-preview is-favicon<?php echo $faviconPreviewUrl ? ' has-image' : ''; ?>">
+                                <?php if ($faviconPreviewUrl): ?>
+                                <img src="<?php echo htmlspecialchars($faviconPreviewUrl); ?>" alt="Favicon">
+                                <?php else: ?>
+                                <span class="settings-brand-placeholder"><i class="fas fa-star"></i> No favicon</span>
+                                <?php endif; ?>
+                            </div>
+                            <input type="file" name="school_favicon" class="form-input" accept="image/png,image/jpeg,image/x-icon,image/vnd.microsoft.icon,.ico">
+                            <span class="field-hint">ICO or PNG, max 512KB. Recommended 32×32 or 64×64.</span>
+                            <?php if ($faviconPreviewUrl): ?>
+                            <label class="settings-remove-check"><input type="checkbox" name="remove_favicon" value="1"> Remove current favicon</label>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-grid form-grid-2">
+                    <div class="form-field"><label>School Name</label><input type="text" name="school_name" class="form-input" value="<?php echo htmlspecialchars($school['name']); ?>" required></div>
+                    <div class="form-field"><label>Tagline</label><input type="text" name="school_tagline" class="form-input" value="<?php echo htmlspecialchars($school['tagline']); ?>"></div>
+                    <div class="form-field form-field-full"><label>Address</label><textarea name="school_address" class="form-input form-textarea" rows="2"><?php echo htmlspecialchars($school['address']); ?></textarea></div>
+                    <div class="form-field"><label>Phone</label><input type="text" name="school_phone" class="form-input" value="<?php echo htmlspecialchars($school['phone']); ?>"></div>
+                    <div class="form-field"><label>Email</label><input type="email" name="school_email" class="form-input" value="<?php echo htmlspecialchars($school['email']); ?>"></div>
+                    <div class="form-field"><label>Website</label><input type="text" name="school_website" class="form-input" value="<?php echo htmlspecialchars($school['website']); ?>"></div>
+                    <div class="form-field"><label>Principal Name</label><input type="text" name="school_principal" class="form-input" value="<?php echo htmlspecialchars($school['principal']); ?>"></div>
+                    <div class="form-field"><label>Affiliation</label><input type="text" name="school_affiliation" class="form-input" value="<?php echo htmlspecialchars($school['affiliation']); ?>" placeholder="CBSE"></div>
+                </div>
+                <div class="settings-form-actions"><button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save Profile</button></div>
+            </form>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($activeTab === 'signatures'): ?>
+        <div class="settings-panel active">
+            <div class="settings-panel-head">
+                <h3>Authorized Signatories</h3>
+                <p>Upload signatures for the Principal and other authorities. These appear on ID cards, certificates and fee receipts. The <strong>default</strong> signatory is used wherever a single signature is needed.</p>
+            </div>
+
+            <div class="sig-list">
+                <?php if (empty($signatures)): ?>
+                <div class="sig-empty"><i class="fas fa-signature"></i><p>No signatories added yet. Add the Principal's signature below to get started.</p></div>
+                <?php else: foreach ($signatures as $sig): ?>
+                <?php $sigUrl = schoolBrandingUrl($sig['signature'] ?? '', 'admin'); ?>
+                <div class="sig-item<?php echo (int) $sig['is_default'] === 1 ? ' is-default' : ''; ?>">
+                    <div class="sig-item-preview">
+                        <?php if ($sigUrl): ?><img src="<?php echo htmlspecialchars($sigUrl); ?>" alt="Signature"><?php else: ?><span class="sig-noimg"><i class="fas fa-image"></i> No image</span><?php endif; ?>
+                    </div>
+                    <div class="sig-item-info">
+                        <strong><?php echo htmlspecialchars($sig['name']); ?>
+                            <?php if ((int) $sig['is_default'] === 1): ?><span class="sig-badge-default"><i class="fas fa-star"></i> Default</span><?php endif; ?>
+                            <?php if ($sig['status'] === 'Inactive'): ?><span class="sig-badge-off">Inactive</span><?php endif; ?>
+                        </strong>
+                        <span><?php echo htmlspecialchars($sig['designation']); ?></span>
+                    </div>
+                    <div class="sig-item-actions">
+                        <?php if ((int) $sig['is_default'] !== 1 && $sig['status'] !== 'Inactive'): ?>
+                        <form method="POST"><input type="hidden" name="action" value="default_signature"><input type="hidden" name="sig_id" value="<?php echo (int) $sig['id']; ?>"><button type="submit" class="sig-btn" title="Set as default"><i class="fas fa-star"></i> Set default</button></form>
+                        <?php endif; ?>
+                        <a href="settings.php?tab=signatures&edit=<?php echo (int) $sig['id']; ?>" class="sig-btn"><i class="fas fa-pen"></i> Edit</a>
+                        <form method="POST" onsubmit="return confirm('Remove this signatory?');"><input type="hidden" name="action" value="delete_signature"><input type="hidden" name="sig_id" value="<?php echo (int) $sig['id']; ?>"><button type="submit" class="sig-btn sig-btn-danger"><i class="fas fa-trash"></i></button></form>
+                    </div>
+                </div>
+                <?php endforeach; endif; ?>
+            </div>
+
+            <div class="settings-branding-block">
+                <h4><i class="fas fa-<?php echo $editSig ? 'pen' : 'plus'; ?>"></i> <?php echo $editSig ? 'Edit Signatory' : 'Add New Signatory'; ?></h4>
+                <p>Use a clear signature image on a transparent or white background for best print results.</p>
+                <form method="POST" class="settings-form" enctype="multipart/form-data">
+                    <input type="hidden" name="action" value="save_signature">
+                    <input type="hidden" name="sig_id" value="<?php echo $editSig ? (int) $editSig['id'] : 0; ?>">
+                    <div class="settings-branding-grid">
+                        <div class="settings-brand-card">
+                            <label>Signature Image</label>
+                            <div class="settings-brand-preview<?php echo ($editSig && !empty($editSig['signature'])) ? ' has-image' : ''; ?>" style="background:#fff">
+                                <?php $editSigUrl = $editSig ? schoolBrandingUrl($editSig['signature'] ?? '', 'admin') : ''; ?>
+                                <?php if ($editSigUrl): ?>
+                                <img src="<?php echo htmlspecialchars($editSigUrl); ?>" alt="Signature">
+                                <?php else: ?>
+                                <span class="settings-brand-placeholder"><i class="fas fa-signature"></i> No signature</span>
+                                <?php endif; ?>
+                            </div>
+                            <input type="file" name="sig_image" class="form-input" accept="image/png,image/jpeg,image/webp"<?php echo $editSig ? '' : ' required'; ?>>
+                            <span class="field-hint">PNG (transparent) recommended, max 2MB.<?php echo $editSig ? ' Leave blank to keep current.' : ''; ?></span>
+                        </div>
+                        <div style="flex:1;min-width:260px">
+                            <div class="form-grid form-grid-1">
+                                <div class="form-field"><label>Signatory Name</label><input type="text" name="sig_name" class="form-input" value="<?php echo htmlspecialchars($editSig['name'] ?? $school['principal'] ?? ''); ?>" placeholder="e.g. Dr. A. Sharma" required></div>
+                                <div class="form-field"><label>Designation</label><input type="text" name="sig_designation" class="form-input" value="<?php echo htmlspecialchars($editSig['designation'] ?? 'Principal'); ?>" placeholder="e.g. Principal / Vice Principal / Exam Controller" required></div>
+                                <div class="form-grid form-grid-2" style="padding:0">
+                                    <div class="form-field"><label>Display Order</label><input type="number" name="sig_sort_order" class="form-input" value="<?php echo (int) ($editSig['sort_order'] ?? 0); ?>"></div>
+                                    <div class="form-field"><label>Status</label><select name="sig_status" class="form-input form-select"><option value="Active" <?php echo (($editSig['status'] ?? 'Active') === 'Active') ? 'selected' : ''; ?>>Active</option><option value="Inactive" <?php echo (($editSig['status'] ?? '') === 'Inactive') ? 'selected' : ''; ?>>Inactive</option></select></div>
+                                </div>
+                                <label class="settings-toggle"><input type="checkbox" name="sig_make_default" value="1" <?php echo ($editSig && (int) $editSig['is_default'] === 1) ? 'checked' : (empty($signatures) ? 'checked' : ''); ?>><span>Set as default signatory (used on ID cards &amp; receipts)</span></label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-form-actions">
+                        <?php if ($editSig): ?><a href="settings.php?tab=signatures" class="btn-header-action btn-header-outline"><i class="fas fa-times"></i> Cancel</a><?php endif; ?>
+                        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> <?php echo $editSig ? 'Update Signatory' : 'Add Signatory'; ?></button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <?php if ($activeTab === 'email'): ?>
         <div class="settings-panel active">
             <div class="settings-panel-head">

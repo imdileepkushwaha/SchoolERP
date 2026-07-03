@@ -57,42 +57,176 @@ $docTypes = ['Birth Certificate', 'Aadhaar', 'Transfer Certificate', 'Previous M
 <div class="content-top-bar">
     <div class="content-top-main">
         <div class="content-top-icon icon-purple"><i class="fas fa-folder-open"></i></div>
-        <div class="content-top-title"><h2>Student Documents</h2><p class="content-top-breadcrumb"><a href="students.php">Students</a><i class="fas fa-chevron-right"></i><span>Documents</span></p></div>
+        <div class="content-top-title">
+            <h2>Student Documents</h2>
+            <p class="content-top-breadcrumb">
+                <a href="dashboard.php">Dashboard</a>
+                <i class="fas fa-chevron-right"></i>
+                <a href="students.php">Students</a>
+                <i class="fas fa-chevron-right"></i>
+                <span>Documents</span>
+            </p>
+        </div>
+    </div>
+    <div class="content-top-actions">
+        <a href="students.php" class="btn-header-action btn-header-outline"><i class="fas fa-arrow-left"></i> Back</a>
     </div>
 </div>
 
 <div class="form-section-card section-mb">
+    <div class="section-card-header">
+        <div class="section-card-icon section-icon-school"><i class="fas fa-search"></i></div>
+        <div>
+            <h4>Find Student</h4>
+            <p>Search by name or admission number to manage documents</p>
+        </div>
+    </div>
     <form method="GET" class="category-add-row">
-        <div class="form-field form-field-grow"><label>Find Student</label><input type="text" name="q" class="form-input" value="<?php echo htmlspecialchars($search); ?>"></div>
-        <div class="form-field category-add-btn-wrap"><label>&nbsp;</label><button type="submit" class="btn-header-action btn-header-primary category-add-btn">Search</button></div>
+        <div class="form-field form-field-grow">
+            <label>Student name or admission no.</label>
+            <input type="text" name="q" class="form-input" value="<?php echo htmlspecialchars($search); ?>" placeholder="e.g. Rahul or ADM001">
+        </div>
+        <div class="form-field category-add-btn-wrap">
+            <label>&nbsp;</label>
+            <button type="submit" class="btn-header-action btn-header-primary category-add-btn"><i class="fas fa-search"></i> Search</button>
+        </div>
     </form>
-    <?php foreach ($results as $r): ?>
-    <p><a href="student_documents.php?student_id=<?php echo $r['id']; ?>" class="teal-link"><?php echo htmlspecialchars($r['name']); ?> — <?php echo htmlspecialchars($r['ad_no']); ?></a></p>
-    <?php endforeach; ?>
+    <?php if ($search !== ''): ?>
+    <div class="erp-search-results student-search-results">
+        <?php if ($results): foreach ($results as $r): ?>
+        <a href="student_documents.php?student_id=<?php echo $r['id']; ?>" class="erp-search-item student-search-card student-search-link">
+            <div class="student-search-main">
+                <div class="student-search-avatar"><i class="fas fa-user-graduate"></i></div>
+                <div class="student-search-info">
+                    <strong><?php echo htmlspecialchars($r['name']); ?></strong>
+                    <span><?php echo htmlspecialchars($r['ad_no']); ?></span>
+                    <div class="student-search-meta">
+                        <span class="student-search-class-pill"><i class="fas fa-school"></i> Class <?php echo htmlspecialchars($r['class']); ?></span>
+                    </div>
+                </div>
+            </div>
+            <span class="student-search-go"><i class="fas fa-chevron-right"></i></span>
+        </a>
+        <?php endforeach; else: ?>
+        <div class="tab-empty-state tab-empty-pad-sm">
+            <div class="tab-empty-icon"><i class="fas fa-search"></i></div>
+            <h3>No students found</h3>
+            <p>Try a different name or admission number.</p>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
 </div>
 
 <?php if ($student): ?>
+<div class="student-doc-banner section-mb">
+    <div class="student-doc-banner-avatar"><i class="fas fa-user-graduate"></i></div>
+    <div class="student-doc-banner-info">
+        <h3><?php echo htmlspecialchars($student['name']); ?></h3>
+        <p>
+            <span><i class="fas fa-id-card"></i> <?php echo htmlspecialchars($student['ad_no']); ?></span>
+            <span><i class="fas fa-school"></i> Class <?php echo htmlspecialchars($student['class']); ?></span>
+            <span><i class="fas fa-file-alt"></i> <?php echo count($docs); ?> document(s)</span>
+        </p>
+    </div>
+    <a href="student_view.php?id=<?php echo $studentId; ?>" class="btn-header-action btn-header-outline btn-sm"><i class="fas fa-eye"></i> View Profile</a>
+</div>
+
 <div class="form-section-card section-mb">
-    <h4><?php echo htmlspecialchars($student['name']); ?> (<?php echo htmlspecialchars($student['ad_no']); ?>)</h4>
-    <form method="POST" enctype="multipart/form-data" class="category-add-row">
+    <div class="section-card-header">
+        <div class="section-card-icon section-icon-school"><i class="fas fa-cloud-upload-alt"></i></div>
+        <div>
+            <h4>Upload Document</h4>
+            <p>PDF, JPG, PNG or WebP — maximum 5 MB</p>
+        </div>
+    </div>
+    <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="upload_doc" value="1">
         <input type="hidden" name="student_id" value="<?php echo $studentId; ?>">
-        <div class="form-field"><label>Document Type</label><select name="doc_type" class="form-input form-select"><?php foreach ($docTypes as $t): ?><option><?php echo $t; ?></option><?php endforeach; ?></select></div>
-        <div class="form-field"><label>File</label><input type="file" name="document" class="form-input" required accept=".pdf,.jpg,.jpeg,.png,.webp"></div>
-        <div class="form-field category-add-btn-wrap"><label>&nbsp;</label><button type="submit" class="btn-header-action btn-header-primary category-add-btn"><i class="fas fa-upload"></i> Upload</button></div>
+        <div class="form-grid form-grid-2 form-grid-spaced doc-upload-grid">
+            <div class="form-field">
+                <label>Document Type</label>
+                <select name="doc_type" class="form-input form-select">
+                    <?php foreach ($docTypes as $t): ?>
+                    <option><?php echo htmlspecialchars($t); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="form-field">
+                <label>Select File</label>
+                <div class="doc-file-input-wrap">
+                    <input type="file" name="document" id="doc-file" class="doc-file-input" required accept=".pdf,.jpg,.jpeg,.png,.webp">
+                    <label for="doc-file" class="doc-file-label">
+                        <i class="fas fa-paperclip"></i>
+                        <span id="doc-file-name">Choose file...</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="form-actions-end">
+            <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-upload"></i> Upload Document</button>
+        </div>
     </form>
 </div>
-<div class="table-container">
-    <table><thead><tr><th>Type</th><th>File</th><th>Uploaded</th><th></th></tr></thead><tbody>
-    <?php foreach ($docs as $d): ?>
-    <tr>
-        <td><?php echo htmlspecialchars($d['doc_type']); ?></td>
-        <td><a href="<?php echo htmlspecialchars($d['file_path']); ?>" target="_blank" class="teal-link"><?php echo htmlspecialchars($d['original_name'] ?? basename($d['file_path'])); ?></a></td>
-        <td><?php echo htmlspecialchars($d['uploaded_at']); ?></td>
-        <td><a href="student_documents.php?student_id=<?php echo $studentId; ?>&delete=<?php echo $d['id']; ?>" class="action-btn delete-btn btn-delete-confirm" onclick="return confirm('Delete?');"><i class="fas fa-trash"></i></a></td>
-    </tr>
-    <?php endforeach; ?>
-    </tbody></table>
+
+<div class="form-section-card section-mb">
+    <div class="section-card-header">
+        <div class="section-card-icon section-icon-school"><i class="fas fa-folder"></i></div>
+        <div>
+            <h4>Uploaded Documents</h4>
+            <p>Click a file to open or download</p>
+        </div>
+    </div>
+    <?php if (empty($docs)): ?>
+    <div class="tab-empty-state tab-empty-pad-sm">
+        <div class="tab-empty-icon"><i class="fas fa-folder-open"></i></div>
+        <h3>No documents yet</h3>
+        <p>Upload birth certificate, Aadhaar, TC or other files above.</p>
+    </div>
+    <?php else: ?>
+    <div class="doc-card-grid">
+        <?php foreach ($docs as $d):
+            $ext = strtolower(pathinfo($d['file_path'], PATHINFO_EXTENSION));
+            $isPdf = $ext === 'pdf';
+            $isImage = in_array($ext, ['jpg', 'jpeg', 'png', 'webp'], true);
+        ?>
+        <div class="doc-card">
+            <div class="doc-card-icon <?php echo $isPdf ? 'doc-icon-pdf' : ($isImage ? 'doc-icon-image' : 'doc-icon-file'); ?>">
+                <i class="fas fa-<?php echo $isPdf ? 'file-pdf' : ($isImage ? 'file-image' : 'file'); ?>"></i>
+            </div>
+            <div class="doc-card-body">
+                <span class="doc-card-type"><?php echo htmlspecialchars($d['doc_type']); ?></span>
+                <strong class="doc-card-name" title="<?php echo htmlspecialchars($d['original_name'] ?? basename($d['file_path'])); ?>">
+                    <?php echo htmlspecialchars($d['original_name'] ?? basename($d['file_path'])); ?>
+                </strong>
+                <span class="doc-card-date"><i class="fas fa-clock"></i> <?php echo htmlspecialchars($d['uploaded_at']); ?></span>
+            </div>
+            <div class="doc-card-actions">
+                <a href="<?php echo htmlspecialchars($d['file_path']); ?>" target="_blank" class="doc-card-btn doc-card-btn-view" title="Open file"><i class="fas fa-external-link-alt"></i></a>
+                <a href="student_documents.php?student_id=<?php echo $studentId; ?>&delete=<?php echo $d['id']; ?>" class="doc-card-btn doc-card-btn-delete btn-delete-confirm" title="Delete" onclick="return confirm('Delete this document?');"><i class="fas fa-trash-alt"></i></a>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+</div>
+<?php elseif ($search === ''): ?>
+<div class="tab-empty-state">
+    <div class="tab-empty-icon"><i class="fas fa-folder-open"></i></div>
+    <h3>Select a student</h3>
+    <p>Search for a student above to upload and manage their documents.</p>
 </div>
 <?php endif; ?>
+
+<script>
+var docFile = document.getElementById('doc-file');
+if (docFile) {
+    docFile.addEventListener('change', function () {
+        var label = document.getElementById('doc-file-name');
+        if (label) {
+            label.textContent = this.files.length ? this.files[0].name : 'Choose file...';
+        }
+    });
+}
+</script>
 <?php require_once 'includes/footer.php'; ?>

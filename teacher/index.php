@@ -8,9 +8,14 @@ session_set_cookie_params([
 session_start();
 require_once __DIR__ . '/../includes/db_connect.php';
 require_once __DIR__ . '/../admin/includes/teacher_helpers.php';
+require_once __DIR__ . '/../admin/includes/settings_helpers.php';
 
 ensureTeacherSchema($pdo);
 ensureTeacherPortalRepair($pdo);
+ensureSettingsSchema($pdo);
+$tp_login_school = getSchoolProfile($pdo);
+$tp_login_logo = schoolBrandingUrl($tp_login_school['logo'] ?? '', 'teacher');
+$tp_login_favicon = schoolBrandingUrl($tp_login_school['favicon'] ?? '', 'teacher');
 
 if (isset($_SESSION['teacher_portal_id'])) {
     header('Location: dashboard.php');
@@ -39,7 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Teacher Login — EduDash</title>
+    <title>Teacher Login — <?php echo htmlspecialchars($tp_login_school['name']); ?></title>
+    <?php if ($tp_login_favicon): ?><link rel="icon" href="<?php echo htmlspecialchars($tp_login_favicon); ?>"><?php endif; ?>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="assets/css/teacher-portal.css">
@@ -56,9 +62,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="tp-login-brand">
                 <div class="tp-login-brand-inner">
                     <div class="tp-login-logo">
-                        <div class="tp-login-logo-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+                        <div class="tp-login-logo-icon<?php echo $tp_login_logo ? ' has-logo' : ''; ?>">
+                            <?php if ($tp_login_logo): ?><img src="<?php echo htmlspecialchars($tp_login_logo); ?>" alt="Logo"><?php else: ?><i class="fas fa-chalkboard-teacher"></i><?php endif; ?>
+                        </div>
                         <div>
-                            <span class="tp-login-logo-tag">EduDash</span>
+                            <span class="tp-login-logo-tag"><?php echo htmlspecialchars($tp_login_school['name']); ?></span>
                             <h1>Teacher Portal</h1>
                         </div>
                     </div>

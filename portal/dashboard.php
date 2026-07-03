@@ -1,93 +1,120 @@
 <?php
+$page_title = 'Dashboard';
+$page_subtitle = 'Class ' . ($student['class'] ?? '') . ' · Section ' . ($student['section'] ?? 'A');
 require_once 'includes/init.php';
-require_once __DIR__ . '/../includes/db_connect.php';
-require_once __DIR__ . '/../admin/includes/erp_helpers.php';
 
-ensureErpSchema($pdo);
 $id = (int) $_SESSION['student_portal_id'];
-$stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
-$stmt->execute([$id]);
-$student = $stmt->fetch(PDO::FETCH_ASSOC);
-if (!$student) {
-    session_destroy();
-    header('Location: index.php');
-    exit;
-}
-
 $fee = getStudentFeeSummary($pdo, $id);
-$attendance = getStudentAttendanceSummary($pdo, $id, (int)date('Y'), (int)date('n'));
-$hwStmt = $pdo->prepare("SELECT * FROM homework WHERE class_name = ? AND section_name = ? ORDER BY due_date DESC LIMIT 10");
+$attendance = getStudentAttendanceSummary($pdo, $id, (int) date('Y'), (int) date('n'));
+$notices = getActiveNotices($pdo, 3, 'Students');
+$hwStmt = $pdo->prepare("SELECT * FROM homework WHERE class_name = ? AND section_name = ? ORDER BY due_date DESC LIMIT 4");
 $hwStmt->execute([$student['class'], $student['section'] ?? 'A']);
 $homework = $hwStmt->fetchAll(PDO::FETCH_ASSOC);
-$exams = $pdo->prepare("SELECT * FROM exams WHERE class_name = ? AND status='Active' ORDER BY id DESC LIMIT 5");
-$exams->execute([$student['class']]);
-$examList = $exams->fetchAll(PDO::FETCH_ASSOC);
-$docs = getStudentDocuments($pdo, $id);
-$name = htmlspecialchars($student['name']);
-?><!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard — <?php echo $name; ?></title>
-<link rel="stylesheet" href="../admin/assets/css/admin.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<style>body{background:#f8fafc;margin:0}.portal-wrap{max-width:1100px;margin:0 auto;padding:20px}.portal-header{background:#fff;border-radius:16px;padding:20px 24px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,.04)}.portal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.portal-card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.04)}.portal-card h3{margin:0 0 12px;font-size:1rem;color:#334155}</style>
-</head><body>
-<div class="portal-wrap">
-    <div class="portal-header">
-        <div><h1 style="margin:0;font-size:1.25rem">Welcome, <?php echo $name; ?></h1>
-        <p style="margin:4px 0 0;color:#64748b">Class <?php echo htmlspecialchars($student['class']); ?> (<?php echo htmlspecialchars($student['section'] ?? 'A'); ?>) · <?php echo htmlspecialchars($student['ad_no']); ?></p></div>
-        <a href="logout.php" class="btn-header-action btn-header-outline"><i class="fas fa-sign-out-alt"></i> Logout</a>
-    </div>
 
-    <div class="portal-grid">
-        <div class="portal-card">
-            <h3><i class="fas fa-user"></i> My Profile</h3>
-            <p><strong>Roll:</strong> <?php echo htmlspecialchars($student['roll']); ?></p>
-            <p><strong>Mobile:</strong> <?php echo displayVal($student['mobile']); ?></p>
-            <p><strong>Email:</strong> <?php echo displayVal($student['email']); ?></p>
-            <p><strong>Category:</strong> <?php echo htmlspecialchars($student['category']); ?></p>
+$attSummary = $attendance['summary'];
+$attTotal = array_sum($attSummary);
+$attPct = $attTotal ? round($attSummary['Present'] / $attTotal * 100) : 0;
+$firstName = trim(explode(' ', $student['name'])[0]);
+$hour = (int) date('G');
+$greeting = $hour < 12 ? 'Good morning' : ($hour < 17 ? 'Good afternoon' : 'Good evening');
+
+require_once 'includes/layout_header.php';
+?>
+<div class="sp-welcome">
+    <img class="sp-welcome-avatar" src="<?php echo htmlspecialchars($sp_photo); ?>" alt="">
+    <div class="sp-welcome-body">
+        <h2><?php echo $greeting; ?>, <?php echo htmlspecialchars($firstName); ?>!</h2>
+        <p>Here's a quick overview of your school activity.</p>
+        <div class="sp-welcome-chips">
+            <span class="sp-welcome-chip"><i class="fas fa-id-card"></i> <?php echo $sp_ad_no; ?></span>
+            <span class="sp-welcome-chip"><i class="fas fa-school"></i> Class <?php echo htmlspecialchars($student['class']); ?> · <?php echo htmlspecialchars($student['section'] ?? 'A'); ?></span>
+            <span class="sp-welcome-chip"><i class="fas fa-hashtag"></i> Roll <?php echo htmlspecialchars($student['roll']); ?></span>
         </div>
-        <div class="portal-card">
-            <h3><i class="far fa-calendar-check"></i> Attendance (This Month)</h3>
-            <p>Present: <strong><?php echo $attendance['summary']['Present']; ?></strong> · Absent: <strong><?php echo $attendance['summary']['Absent']; ?></strong></p>
-            <p>Late: <?php echo $attendance['summary']['Late']; ?> · Half Day: <?php echo $attendance['summary']['Half Day']; ?></p>
-        </div>
-        <div class="portal-card">
-            <h3><i class="fas fa-file-invoice-dollar"></i> Fees</h3>
-            <?php if ($fee): ?>
-            <p>Due: Rs. <?php echo number_format($fee['total_due'], 2); ?></p>
-            <p>Paid: Rs. <?php echo number_format($fee['total_paid'], 2); ?></p>
-            <p>Balance: <strong style="color:#dc2626">Rs. <?php echo number_format($fee['balance'], 2); ?></strong></p>
-            <?php endif; ?>
-        </div>
-        <div class="portal-card">
-            <h3><i class="fas fa-book"></i> Homework</h3>
-            <?php if ($homework): foreach ($homework as $h): ?>
-            <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
-                <strong><?php echo htmlspecialchars($h['title']); ?></strong>
-                <?php if ($h['due_date']): ?><br><small>Due: <?php echo htmlspecialchars($h['due_date']); ?></small><?php endif; ?>
-                <?php if ($h['description']): ?><p style="margin:4px 0 0;font-size:.9rem"><?php echo nl2br(htmlspecialchars($h['description'])); ?></p><?php endif; ?>
-            </div>
-            <?php endforeach; else: ?><p style="color:#94a3b8">No homework posted.</p><?php endif; ?>
-        </div>
-        <div class="portal-card">
-            <h3><i class="far fa-edit"></i> Exam Results</h3>
-            <?php if ($examList): foreach ($examList as $ex):
-                $marks = getStudentMarksForExam($pdo, $id, $ex['id']);
-                if (!$marks) continue;
-            ?>
-            <p><strong><?php echo htmlspecialchars($ex['name']); ?></strong></p>
-            <ul style="margin:0 0 12px;padding-left:18px;font-size:.9rem">
-            <?php foreach ($marks as $m): if ($m['marks_obtained'] === null) continue; ?>
-                <li><?php echo htmlspecialchars($m['subject_name']); ?>: <?php echo $m['marks_obtained']; ?>/<?php echo $m['max_marks']; ?> (<?php echo $m['grade']; ?>)</li>
-            <?php endforeach; ?>
-            </ul>
-            <?php endforeach; else: ?><p style="color:#94a3b8">No results yet.</p><?php endif; ?>
-        </div>
-        <div class="portal-card">
-            <h3><i class="fas fa-folder"></i> Documents</h3>
-            <?php if ($docs): foreach ($docs as $d): ?>
-            <p><a href="../admin/<?php echo htmlspecialchars($d['file_path']); ?>" target="_blank" class="teal-link"><?php echo htmlspecialchars($d['doc_type']); ?></a></p>
-            <?php endforeach; else: ?><p style="color:#94a3b8">No documents.</p><?php endif; ?>
-        </div>
+    </div>
+    <div class="sp-welcome-date">
+        <strong><?php echo date('d'); ?></strong>
+        <span><?php echo date('M Y'); ?></span>
     </div>
 </div>
-</body></html>
+
+<div class="sp-stat-grid">
+    <div class="sp-stat tone-green">
+        <div class="sp-stat-icon"><i class="fas fa-percent"></i></div>
+        <div class="sp-stat-body"><span>Attendance</span><strong><?php echo $attPct; ?>%</strong><small><?php echo $attSummary['Present']; ?> present this month</small></div>
+    </div>
+    <div class="sp-stat tone-purple">
+        <div class="sp-stat-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+        <div class="sp-stat-body"><span>Fee Balance</span><strong>₹<?php echo number_format($fee['balance'] ?? 0, 0); ?></strong><small>₹<?php echo number_format($fee['total_paid'] ?? 0, 0); ?> paid so far</small></div>
+    </div>
+    <div class="sp-stat tone-blue">
+        <div class="sp-stat-icon"><i class="fas fa-book"></i></div>
+        <div class="sp-stat-body"><span>Homework</span><strong><?php echo count($homework); ?></strong><small>Recent assignments</small></div>
+    </div>
+    <div class="sp-stat tone-amber">
+        <div class="sp-stat-icon"><i class="fas fa-bullhorn"></i></div>
+        <div class="sp-stat-body"><span>Notices</span><strong><?php echo count($notices); ?></strong><small>Active for students</small></div>
+    </div>
+</div>
+
+<div class="sp-card sp-quick-card">
+    <div class="sp-card-head"><h3><i class="fas fa-bolt"></i> Quick Access</h3></div>
+    <div class="sp-quick-grid">
+        <a href="results.php" class="sp-quick tone-purple"><span class="sp-quick-ic"><i class="fas fa-chart-line"></i></span><strong>Exam Results</strong><small>Marks &amp; report card</small></a>
+        <a href="timetable.php" class="sp-quick tone-blue"><span class="sp-quick-ic"><i class="fas fa-table"></i></span><strong>Timetable</strong><small>Weekly schedule</small></a>
+        <a href="attendance.php" class="sp-quick tone-green"><span class="sp-quick-ic"><i class="far fa-calendar-check"></i></span><strong>Attendance</strong><small>Your record</small></a>
+        <a href="fees.php" class="sp-quick tone-amber"><span class="sp-quick-ic"><i class="fas fa-file-invoice-dollar"></i></span><strong>Fees</strong><small>Pay &amp; receipts</small></a>
+        <a href="certificates.php" class="sp-quick tone-purple"><span class="sp-quick-ic"><i class="fas fa-certificate"></i></span><strong>Certificates</strong><small>View &amp; download</small></a>
+        <a href="documents.php" class="sp-quick tone-blue"><span class="sp-quick-ic"><i class="fas fa-folder-open"></i></span><strong>Documents</strong><small>Your files</small></a>
+    </div>
+</div>
+
+<div class="sp-grid-2">
+    <div class="sp-card">
+        <div class="sp-card-head">
+            <h3><i class="fas fa-bullhorn"></i> Latest Notices</h3>
+            <a href="notices.php" class="sp-card-link">View all <i class="fas fa-arrow-right"></i></a>
+        </div>
+        <?php if ($notices): ?>
+        <div class="sp-list">
+            <?php foreach ($notices as $n):
+                $prio = $n['priority'] ?? 'Normal';
+                $ptone = $prio === 'Urgent' ? 'tone-amber' : 'tone-blue';
+            ?>
+            <div class="sp-list-row">
+                <div class="sp-list-ico <?php echo $ptone; ?>"><i class="fas fa-bullhorn"></i></div>
+                <div class="sp-list-main">
+                    <strong><?php echo htmlspecialchars($n['title']); ?></strong>
+                    <p><?php echo htmlspecialchars(mb_substr($n['body'], 0, 110)); ?><?php echo mb_strlen($n['body']) > 110 ? '…' : ''; ?></p>
+                    <small><i class="far fa-calendar"></i> <?php echo date('d M Y', strtotime($n['publish_date'])); ?></small>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php else: ?>
+        <div class="sp-empty"><div class="sp-empty-icon"><i class="fas fa-bullhorn"></i></div><strong>No notices</strong><p>You're all caught up.</p></div>
+        <?php endif; ?>
+    </div>
+
+    <div class="sp-card">
+        <div class="sp-card-head">
+            <h3><i class="fas fa-book-open"></i> Recent Homework</h3>
+            <a href="homework.php" class="sp-card-link">View all <i class="fas fa-arrow-right"></i></a>
+        </div>
+        <?php if ($homework): ?>
+        <div class="sp-list">
+            <?php foreach ($homework as $h): ?>
+            <div class="sp-list-row">
+                <div class="sp-list-ico"><i class="fas fa-book"></i></div>
+                <div class="sp-list-main">
+                    <strong><?php echo htmlspecialchars($h['title']); ?></strong>
+                    <?php if ($h['due_date']): ?><small><i class="far fa-clock"></i> Due <?php echo date('d M Y', strtotime($h['due_date'])); ?></small><?php endif; ?>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php else: ?>
+        <div class="sp-empty"><div class="sp-empty-icon"><i class="fas fa-book-open"></i></div><strong>No homework</strong><p>Nothing assigned right now.</p></div>
+        <?php endif; ?>
+    </div>
+</div>
+<?php require_once 'includes/layout_footer.php'; ?>

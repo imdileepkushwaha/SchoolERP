@@ -2,11 +2,14 @@
 session_start();
 require_once '../includes/db_connect.php';
 require_once 'includes/erp_helpers.php';
+require_once 'includes/settings_helpers.php';
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     header('Location: index.php');
     exit;
 }
 ensureErpSchema($pdo);
+ensureSettingsSchema($pdo);
+$school = getSchoolProfile($pdo);
 $studentId = (int) ($_GET['student_id'] ?? 0);
 $examId = (int) ($_GET['exam_id'] ?? 0);
 $stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
@@ -30,7 +33,8 @@ $pct = $totalMax ? round($totalObt / $totalMax * 100, 1) : 0;
 </head><body>
 <div class="no-print" style="margin-bottom:16px"><button onclick="window.print()" class="btn-header-action btn-header-primary">Print / Save PDF</button></div>
 <div class="rc">
-    <h2 style="text-align:center;margin:0">EduDash School</h2>
+    <h2 style="text-align:center;margin:0"><?php echo htmlspecialchars($school['name']); ?></h2>
+    <p style="text-align:center"><?php echo htmlspecialchars($school['tagline']); ?></p>
     <p style="text-align:center">Report Card — <?php echo htmlspecialchars($exam['name']); ?></p>
     <hr>
     <p><strong>Name:</strong> <?php echo htmlspecialchars($student['name']); ?> &nbsp; <strong>Adm No:</strong> <?php echo htmlspecialchars($student['ad_no']); ?></p>

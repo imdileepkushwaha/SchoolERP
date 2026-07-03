@@ -4,19 +4,24 @@ $current_page = basename($_SERVER['PHP_SELF']);
 $admin_name = htmlspecialchars(ucfirst($_SESSION['admin_username']));
 $avatar_url = 'https://ui-avatars.com/api/?name=' . urlencode($_SESSION['admin_username']) . '&background=059669&color=fff&bold=true';
 
-$student_pages = ['students.php', 'student_add.php', 'student_edit.php', 'student_view.php', 'student_suspend.php', 'student_categories.php', 'student_import.php', 'student_promote.php', 'student_promote_advanced.php', 'student_id_card.php', 'student_documents.php', 'classes.php', 'portal_accounts.php'];
+$student_pages = ['students.php', 'student_add.php', 'student_edit.php', 'student_view.php', 'student_suspend.php', 'student_categories.php', 'student_import.php', 'student_promote.php', 'student_promote_advanced.php', 'student_id_card.php', 'student_documents.php', 'classes.php', 'portal_accounts.php', 'admission_enquiries.php'];
+$academic_pages = ['academic_sessions.php', 'subjects.php', 'class_timetable.php', 'notices.php', 'homework.php'];
 $attendance_pages = ['attendance.php', 'attendance_report.php'];
-$fee_pages = ['fees.php', 'fee_collect.php', 'fee_receipt.php'];
-$exam_pages = ['exams.php', 'marks.php', 'report_card.php'];
-$teacher_pages = ['teachers.php', 'teacher_add.php', 'teacher_edit.php', 'teacher_view.php', 'teacher_timetable.php', 'teacher_portal_accounts.php'];
+$fee_pages = ['fees.php', 'fee_collect.php', 'fee_receipt.php', 'fee_reports.php'];
+$exam_pages = ['exams.php', 'marks.php', 'report_card.php', 'exam_analytics.php'];
+$teacher_pages = ['teachers.php', 'teacher_add.php', 'teacher_edit.php', 'teacher_view.php', 'teacher_timetable.php', 'teacher_portal_accounts.php', 'teacher_attendance.php', 'leave_requests.php'];
 ?>
 <aside class="admin-sidebar" id="adminSidebar">
     <div class="sidebar-brand">
-        <div class="sidebar-logo-icon">
+        <div class="sidebar-logo-icon<?php echo $brandLogoUrl ? ' has-logo' : ''; ?>">
+            <?php if ($brandLogoUrl): ?>
+            <img src="<?php echo htmlspecialchars($brandLogoUrl); ?>" alt="<?php echo htmlspecialchars($brandTitle); ?>" class="sidebar-logo-img">
+            <?php else: ?>
             <i class="fas fa-graduation-cap"></i>
+            <?php endif; ?>
         </div>
         <div class="sidebar-brand-text">
-            <h2>EduDash</h2>
+            <h2><?php echo htmlspecialchars($brandTitle); ?></h2>
             <span>Admin Panel</span>
         </div>
     </div>
@@ -59,6 +64,21 @@ $teacher_pages = ['teachers.php', 'teacher_add.php', 'teacher_edit.php', 'teache
                     <li class="<?php echo ($current_page == 'student_categories.php') ? 'active' : ''; ?>"><a href="student_categories.php">Categories</a></li>
                     <li class="<?php echo ($current_page == 'student_suspend.php') ? 'active' : ''; ?>"><a href="student_suspend.php">Suspend</a></li>
                     <li class="<?php echo ($current_page == 'portal_accounts.php') ? 'active' : ''; ?>"><a href="portal_accounts.php">Student Portal</a></li>
+                    <li class="<?php echo ($current_page == 'admission_enquiries.php') ? 'active' : ''; ?>"><a href="admission_enquiries.php">Admission Enquiries</a></li>
+                </ul>
+            </li>
+            <li class="has-submenu <?php echo (in_array($current_page, $academic_pages)) ? 'active open' : ''; ?>">
+                <a href="#" class="submenu-toggle" onclick="return toggleSubmenu(this, event)">
+                    <span class="menu-icon-wrap"><i class="fas fa-book-open menu-icon"></i></span>
+                    <span class="menu-text">Academic</span>
+                    <i class="fas fa-chevron-down chevron"></i>
+                </a>
+                <ul class="submenu">
+                    <li class="<?php echo ($current_page == 'academic_sessions.php') ? 'active' : ''; ?>"><a href="academic_sessions.php">Sessions</a></li>
+                    <li class="<?php echo ($current_page == 'subjects.php') ? 'active' : ''; ?>"><a href="subjects.php">Subjects</a></li>
+                    <li class="<?php echo ($current_page == 'class_timetable.php') ? 'active' : ''; ?>"><a href="class_timetable.php">Class Timetable</a></li>
+                    <li class="<?php echo ($current_page == 'notices.php') ? 'active' : ''; ?>"><a href="notices.php">Notice Board</a></li>
+                    <li class="<?php echo ($current_page == 'homework.php') ? 'active' : ''; ?>"><a href="homework.php">Homework</a></li>
                 </ul>
             </li>
             <li class="has-submenu <?php echo (in_array($current_page, $attendance_pages)) ? 'active open' : ''; ?>">
@@ -81,6 +101,7 @@ $teacher_pages = ['teachers.php', 'teacher_add.php', 'teacher_edit.php', 'teache
                 <ul class="submenu">
                     <li class="<?php echo ($current_page == 'fees.php') ? 'active' : ''; ?>"><a href="fees.php">Fee Structure</a></li>
                     <li class="<?php echo ($current_page == 'fee_collect.php') ? 'active' : ''; ?>"><a href="fee_collect.php">Collect Fee</a></li>
+                    <li class="<?php echo ($current_page == 'fee_reports.php') ? 'active' : ''; ?>"><a href="fee_reports.php">Fee Reports</a></li>
                 </ul>
             </li>
             <li class="has-submenu <?php echo (in_array($current_page, $exam_pages)) ? 'active open' : ''; ?>">
@@ -92,6 +113,7 @@ $teacher_pages = ['teachers.php', 'teacher_add.php', 'teacher_edit.php', 'teache
                 <ul class="submenu">
                     <li class="<?php echo ($current_page == 'exams.php') ? 'active' : ''; ?>"><a href="exams.php">Manage Exams</a></li>
                     <li class="<?php echo ($current_page == 'marks.php') ? 'active' : ''; ?>"><a href="marks.php">Enter Marks</a></li>
+                    <li class="<?php echo ($current_page == 'exam_analytics.php') ? 'active' : ''; ?>"><a href="exam_analytics.php">Result Analytics</a></li>
                 </ul>
             </li>
             <li class="<?php echo ($current_page == 'certificates.php' || $current_page == 'certificate_print.php') ? 'active' : ''; ?>">
@@ -135,6 +157,8 @@ $teacher_pages = ['teachers.php', 'teacher_add.php', 'teacher_edit.php', 'teache
                     <li class="<?php echo ($current_page == 'teacher_view.php') ? 'active' : ''; ?>"><a href="teacher_view.php">Teacher Details</a></li>
                     <li class="<?php echo ($current_page == 'teacher_timetable.php') ? 'active' : ''; ?>"><a href="teacher_timetable.php">Teacher Timetable</a></li>
                     <li class="<?php echo ($current_page == 'teacher_portal_accounts.php') ? 'active' : ''; ?>"><a href="teacher_portal_accounts.php">Teacher Portal</a></li>
+                    <li class="<?php echo ($current_page == 'teacher_attendance.php') ? 'active' : ''; ?>"><a href="teacher_attendance.php">Teacher Attendance</a></li>
+                    <li class="<?php echo ($current_page == 'leave_requests.php') ? 'active' : ''; ?>"><a href="leave_requests.php">Leave Requests</a></li>
                 </ul>
             </li>
             <li class="<?php echo ($current_page == 'settings.php') ? 'active' : ''; ?>">

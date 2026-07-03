@@ -23,6 +23,7 @@ function ensureStudentSchema($pdo) {
         'room_no'           => "VARCHAR(20) DEFAULT NULL",
         'room_type'         => "VARCHAR(50) DEFAULT NULL",
         'description'       => "TEXT DEFAULT NULL",
+        'created_at'        => "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
     ];
 
     foreach ($columns as $col => $def) {

@@ -76,13 +76,23 @@ if (!$teacher) {
             <button type="submit" class="btn-header-action btn-header-primary category-add-btn"><i class="fas fa-search"></i> Search</button>
         </form>
         <?php if ($search !== ''): ?>
-        <div class="erp-search-results" style="margin-top:16px">
+        <div class="erp-search-results teacher-search-results">
             <?php if ($results): foreach ($results as $r): ?>
-            <a href="teacher_edit.php?id=<?php echo $r['id']; ?>" class="erp-search-item">
-                <strong><?php echo htmlspecialchars($r['name']); ?></strong> — <?php echo htmlspecialchars($r['employee_id']); ?> · <?php echo htmlspecialchars($r['subject']); ?>
+            <a href="teacher_edit.php?id=<?php echo $r['id']; ?>" class="erp-search-item teacher-search-card teacher-search-link">
+                <div class="teacher-search-main">
+                    <div class="teacher-search-avatar"><i class="fas fa-chalkboard-teacher"></i></div>
+                    <div class="teacher-search-info">
+                        <strong><?php echo htmlspecialchars($r['name']); ?></strong>
+                        <span><?php echo htmlspecialchars($r['employee_id']); ?></span>
+                        <div class="teacher-search-meta">
+                            <span class="teacher-search-subject-pill"><i class="fas fa-book"></i> <?php echo htmlspecialchars($r['subject'] ?: 'No subject'); ?></span>
+                        </div>
+                    </div>
+                </div>
+                <span class="teacher-search-go"><i class="fas fa-arrow-right"></i></span>
             </a>
             <?php endforeach; else: ?>
-            <p class="tab-empty-state">No teachers found.</p>
+            <div class="tab-empty-state tab-empty-pad-sm"><div class="tab-empty-icon"><i class="fas fa-search"></i></div><h3>No teachers found</h3></div>
             <?php endif; ?>
         </div>
         <?php endif; ?>

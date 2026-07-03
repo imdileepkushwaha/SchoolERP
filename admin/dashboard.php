@@ -1,272 +1,329 @@
 <?php
-// admin/dashboard.php
 $page_title = "Dashboard";
-require_once 'includes/header.php';
+require_once 'includes/init.php';
 require_once '../includes/db_connect.php';
+require_once 'includes/erp_helpers.php';
+require_once 'includes/settings_helpers.php';
 
-// Mock stats for UI
-$stats = [
-    ['icon' => 'fa-user-graduate', 'color' => '#ff7e67', 'count' => '20,000', 'label' => 'Total Student'],
-    ['icon' => 'fa-chalkboard-teacher', 'color' => '#4318ff', 'count' => '20,000', 'label' => 'Total Student'],
-    ['icon' => 'fa-users', 'color' => '#9333ea', 'count' => '20,000', 'label' => 'Total Student'],
-    ['icon' => 'fa-user-shield', 'color' => '#14b8a6', 'count' => '20,000', 'label' => 'Total Student'],
-    ['icon' => 'fa-money-bill-alt', 'color' => '#10b981', 'count' => '20,000', 'label' => 'Total Student'],
-    ['icon' => 'fa-file-invoice', 'color' => '#3b82f6', 'count' => '20,000', 'label' => 'Total Student'],
-];
+ensureErpSchema($pdo);
+ensureSettingsSchema($pdo);
+$school = getSchoolProfile($pdo);
+$stats = getDashboardStats($pdo);
+$notices = getActiveNotices($pdo, 5);
+$session = getCurrentSession($pdo);
+$pendingLeaves = $pdo->query(
+    "SELECT lr.*, t.name AS teacher_name FROM leave_requests lr
+     LEFT JOIN teachers t ON lr.person_type='Teacher' AND t.id=lr.person_id
+     WHERE lr.status='Pending' ORDER BY lr.created_at DESC LIMIT 5"
+)->fetchAll(PDO::FETCH_ASSOC);
+$topTeachers = $pdo->query(
+    "SELECT name, subject, employee_id FROM teachers WHERE status='Active' ORDER BY name LIMIT 5"
+)->fetchAll(PDO::FETCH_ASSOC);
+
+require_once 'includes/header.php';
+
+$monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+$chartData = array_values($stats['chartMonths']);
+$yearFeeTotal = array_sum($stats['chartMonths']);
+$hour = (int) date('G');
+$greeting = $hour < 12 ? 'Good morning' : ($hour < 17 ? 'Good afternoon' : 'Good evening');
+$adminDisplay = htmlspecialchars(ucfirst($_SESSION['admin_username']));
+$todayLabel = date('l, d M Y');
 ?>
 
-<div class="page-title-block">
-    <h1>Dashboard</h1>
-    <p>School <i class="fas fa-arrow-right" style="font-size:0.7rem; margin:0 5px;"></i> Manage your school, track attendance, expense, and net worth.</p>
+<div class="db-welcome">
+    <div class="db-welcome-main">
+        <div class="db-welcome-badge"><i class="fas fa-sun"></i> <?php echo $greeting; ?>, <?php echo $adminDisplay; ?></div>
+        <h2><?php echo htmlspecialchars($school['name']); ?></h2>
+        <p>
+            <i class="fas fa-calendar-day"></i> <?php echo $todayLabel; ?>
+            · Session <?php echo htmlspecialchars($session['name'] ?? '—'); ?>
+            <?php if (!empty($school['tagline'])): ?> · <?php echo htmlspecialchars($school['tagline']); ?><?php endif; ?>
+        </p>
+    </div>
+    <?php if (!empty($brandLogoUrl)): ?>
+    <div class="db-welcome-logo"><img src="<?php echo htmlspecialchars($brandLogoUrl); ?>" alt="School logo"></div>
+    <?php endif; ?>
+    <div class="db-welcome-actions">
+        <a href="student_add.php" class="db-action-btn"><i class="fas fa-user-plus"></i> Add Student</a>
+        <a href="attendance.php" class="db-action-btn"><i class="far fa-calendar-check"></i> Attendance</a>
+        <a href="fee_collect.php" class="db-action-btn is-primary"><i class="fas fa-rupee-sign"></i> Collect Fee</a>
+    </div>
 </div>
 
-<div class="dashboard-grid">
-    <!-- Left Column (Wider) -->
-    <div class="col-left">
-        
-        <!-- 6 Stats Cards -->
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 20px;">
-            <?php foreach($stats as $stat): ?>
-            <div class="widget-card stat-box">
-                <div class="stat-icon" style="background-color: <?php echo $stat['color']; ?>;">
-                    <i class="fas <?php echo $stat['icon']; ?>"></i>
+<div class="db-stat-grid">
+    <div class="db-stat is-students">
+        <div class="db-stat-icon"><i class="fas fa-user-graduate"></i></div>
+        <div class="db-stat-body">
+            <span>Active Students</span>
+            <strong><?php echo number_format($stats['totalStudents']); ?></strong>
+            <em>+<?php echo $stats['newStudentsMonth']; ?> this month</em>
+        </div>
+    </div>
+    <div class="db-stat is-teachers">
+        <div class="db-stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+        <div class="db-stat-body">
+            <span>Active Teachers</span>
+            <strong><?php echo number_format($stats['totalTeachers']); ?></strong>
+        </div>
+    </div>
+    <div class="db-stat is-portal">
+        <div class="db-stat-icon"><i class="fas fa-laptop"></i></div>
+        <div class="db-stat-body">
+            <span>Portal Enabled</span>
+            <strong><?php echo number_format($stats['portalEnabled']); ?></strong>
+        </div>
+    </div>
+    <div class="db-stat is-fee-today">
+        <div class="db-stat-icon"><i class="fas fa-coins"></i></div>
+        <div class="db-stat-body">
+            <span>Fee Today</span>
+            <strong>₹<?php echo number_format($stats['feeToday'], 0); ?></strong>
+        </div>
+    </div>
+    <div class="db-stat is-fee-month">
+        <div class="db-stat-icon"><i class="fas fa-wallet"></i></div>
+        <div class="db-stat-body">
+            <span>Fee This Month</span>
+            <strong>₹<?php echo number_format($stats['feeMonth'], 0); ?></strong>
+        </div>
+    </div>
+    <div class="db-stat is-attendance">
+        <div class="db-stat-icon"><i class="fas fa-user-check"></i></div>
+        <div class="db-stat-body">
+            <span>Present Today</span>
+            <strong><?php echo number_format($stats['presentToday']); ?></strong>
+            <em><?php echo $stats['absentToday']; ?> absent</em>
+        </div>
+    </div>
+</div>
+
+<div class="db-layout">
+    <div class="db-main">
+        <div class="form-section-card db-chart-card">
+            <div class="db-card-head">
+                <div class="db-card-head-icon is-green"><i class="fas fa-chart-bar"></i></div>
+                <div>
+                    <h4>Fee Collection — <?php echo date('Y'); ?></h4>
+                    <p>₹<?php echo number_format($yearFeeTotal, 0); ?> collected this year</p>
                 </div>
-                <div class="stat-info">
-                    <h4><?php echo $stat['label']; ?></h4>
-                    <h2><?php echo $stat['count']; ?></h2>
-                    <p class="stat-trend trend-up">10% ▲ <span class="trend-text">+5 This Month</span></p>
-                </div>
+                <a href="fee_reports.php" class="db-card-link">View reports <i class="fas fa-arrow-right"></i></a>
             </div>
-            <?php endforeach; ?>
+            <div id="revenueChart" class="db-chart"></div>
         </div>
 
-        <!-- Revenue Statistic Chart -->
-        <div class="widget-card" style="margin-bottom: 20px;">
-            <div class="widget-title">
-                <span>Revenue Statistic</span>
+        <div class="db-split">
+            <div class="form-section-card db-panel">
+                <div class="db-card-head compact">
+                    <div class="db-card-head-icon is-purple"><i class="fas fa-bullhorn"></i></div>
+                    <div>
+                        <h4>Notice Board</h4>
+                        <p>Latest announcements</p>
+                    </div>
+                    <a href="notices.php" class="db-card-link">Manage</a>
+                </div>
+                <?php if ($notices): ?>
+                <div class="db-notice-list">
+                    <?php foreach ($notices as $n):
+                        $prioClass = $n['priority'] === 'Urgent' ? 'is-urgent' : ($n['priority'] === 'Important' ? 'is-important' : '');
+                    ?>
+                    <a href="notices.php" class="db-notice-item">
+                        <div class="db-notice-top">
+                            <strong><?php echo htmlspecialchars($n['title']); ?></strong>
+                            <?php if ($n['priority'] !== 'Normal'): ?>
+                            <span class="db-priority-badge <?php echo $prioClass; ?>"><?php echo htmlspecialchars($n['priority']); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <p><?php echo htmlspecialchars(mb_substr($n['body'], 0, 90)); ?>…</p>
+                        <small><i class="fas fa-calendar"></i> <?php echo date('d M Y', strtotime($n['publish_date'])); ?></small>
+                    </a>
+                    <?php endforeach; ?>
+                </div>
+                <?php else: ?>
+                <div class="db-empty">
+                    <i class="fas fa-bullhorn"></i>
+                    <p>No notices yet. <a href="notices.php">Publish one</a></p>
+                </div>
+                <?php endif; ?>
             </div>
-            <div id="revenueChart"></div>
-        </div>
 
-        <!-- Notice Board & Leave Requests -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-            <div class="widget-card">
-                <div class="widget-title">
-                    <span>Notice Board</span>
-                    <i class="fas fa-ellipsis-v" style="color: var(--text-muted); cursor:pointer;"></i>
-                </div>
-                <!-- Notice Items -->
-                <div class="list-item">
-                    <img src="https://ui-avatars.com/api/?name=Admin&background=random" class="list-avatar">
-                    <div class="list-content">
-                        <h5>Admin</h5>
-                        <p>Lorem Ipsum is simply dummy text of the printing and typesetting...</p>
-                        <span style="font-size:0.75rem; color:var(--text-muted);">25 Jan 2024</span>
+            <div class="form-section-card db-panel">
+                <div class="db-card-head compact">
+                    <div class="db-card-head-icon is-orange"><i class="fas fa-plane-departure"></i></div>
+                    <div>
+                        <h4>Pending Leaves</h4>
+                        <p><?php echo $stats['pendingLeaves']; ?> awaiting approval</p>
                     </div>
+                    <a href="leave_requests.php" class="db-card-link">Review</a>
                 </div>
-                <div class="list-item">
-                    <img src="https://ui-avatars.com/api/?name=Kathryn+Murphy&background=random" class="list-avatar">
-                    <div class="list-content">
-                        <h5>Kathryn Murphy</h5>
-                        <p>Lorem Ipsum is simply dummy text of the printing and typesetting...</p>
-                        <span style="font-size:0.75rem; color:var(--text-muted);">25 Jan 2024</span>
-                    </div>
+                <?php if ($pendingLeaves): ?>
+                <div class="db-leave-list">
+                    <?php foreach ($pendingLeaves as $l):
+                        $name = $l['teacher_name'] ?? 'Staff';
+                        $initial = strtoupper(substr($name, 0, 1));
+                    ?>
+                    <a href="leave_requests.php" class="db-leave-item">
+                        <span class="db-leave-avatar"><?php echo htmlspecialchars($initial); ?></span>
+                        <div class="db-leave-body">
+                            <strong><?php echo htmlspecialchars($name); ?></strong>
+                            <span><?php echo date('d M', strtotime($l['from_date'])); ?> → <?php echo date('d M Y', strtotime($l['to_date'])); ?></span>
+                        </div>
+                        <em><?php echo htmlspecialchars($l['reason'] ?: 'Leave'); ?></em>
+                    </a>
+                    <?php endforeach; ?>
                 </div>
-            </div>
-
-            <div class="widget-card">
-                <div class="widget-title">
-                    <span>Leave Requests</span>
-                    <i class="fas fa-ellipsis-v" style="color: var(--text-muted); cursor:pointer;"></i>
+                <?php else: ?>
+                <div class="db-empty">
+                    <i class="fas fa-check-circle"></i>
+                    <p>No pending leave requests</p>
                 </div>
-                <!-- Leave Items -->
-                <div class="list-item" style="align-items: center;">
-                    <img src="https://ui-avatars.com/api/?name=Darlene+Robertson&background=random" class="list-avatar">
-                    <div class="list-content">
-                        <h5>Darlene Robertson</h5>
-                        <p>English Teacher</p>
-                    </div>
-                    <div class="list-meta">
-                        <strong>3 Days</strong>
-                        Apply on: 10 April
-                    </div>
-                </div>
-                <div class="list-item" style="align-items: center;">
-                    <img src="https://ui-avatars.com/api/?name=Esther+Howard&background=random" class="list-avatar">
-                    <div class="list-content">
-                        <h5>Esther Howard</h5>
-                        <p>English Teacher</p>
-                    </div>
-                    <div class="list-meta">
-                        <strong>3 Days</strong>
-                        Apply on: 10 April
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- User Overview -->
-        <div class="widget-card">
-            <div class="widget-title">
-                <span>User Overview</span>
-                <i class="fas fa-ellipsis-v" style="color: var(--text-muted); cursor:pointer;"></i>
-            </div>
-            <div id="userOverviewChart" style="display:flex; justify-content:center;"></div>
-            <div style="display:flex; justify-content:space-around; margin-top:20px;">
-                <div style="text-align:center;">
-                    <p style="color:var(--text-muted); font-size:0.8rem;"><span style="color:#10b981;">●</span> Student</p>
-                    <h3 style="color:var(--text-dark);">750</h3>
-                </div>
-                <div style="text-align:center;">
-                    <p style="color:var(--text-muted); font-size:0.8rem;"><span style="color:#f59e0b;">●</span> Teacher</p>
-                    <h3 style="color:var(--text-dark);">56</h3>
-                </div>
-                <div style="text-align:center;">
-                    <p style="color:var(--text-muted); font-size:0.8rem;"><span style="color:#4318ff;">●</span> Staffs</p>
-                    <h3 style="color:var(--text-dark);">15</h3>
-                </div>
+                <?php endif; ?>
             </div>
         </div>
 
+        <div class="form-section-card db-panel">
+            <div class="db-card-head compact">
+                <div class="db-card-head-icon is-blue"><i class="fas fa-user-plus"></i></div>
+                <div>
+                    <h4>Recent Admissions</h4>
+                    <p>Latest enrolled students</p>
+                </div>
+                <a href="students.php" class="db-card-link">All students</a>
+            </div>
+            <?php if ($stats['recentStudents']): ?>
+            <div class="table-wrapper">
+                <table class="db-table">
+                    <thead><tr><th>Adm No</th><th>Student</th><th>Class</th><th></th></tr></thead>
+                    <tbody>
+                    <?php foreach ($stats['recentStudents'] as $s):
+                        $initials = '';
+                        foreach (preg_split('/\s+/', trim($s['name'])) as $part) {
+                            if ($part !== '') {
+                                $initials .= strtoupper($part[0]);
+                            }
+                        }
+                        $initials = substr($initials, 0, 2) ?: 'S';
+                    ?>
+                    <tr>
+                        <td><code class="db-adm-code"><?php echo htmlspecialchars($s['ad_no']); ?></code></td>
+                        <td>
+                            <div class="db-student-cell">
+                                <span class="db-mini-avatar"><?php echo htmlspecialchars($initials); ?></span>
+                                <?php echo htmlspecialchars($s['name']); ?>
+                            </div>
+                        </td>
+                        <td><span class="db-class-pill"><?php echo htmlspecialchars($s['class']); ?></span></td>
+                        <td><a href="student_view.php?id=<?php echo (int) $s['id']; ?>" class="db-view-link">View</a></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php else: ?>
+            <div class="db-empty"><i class="fas fa-users"></i><p>No students yet</p></div>
+            <?php endif; ?>
+        </div>
     </div>
 
-    <!-- Right Column (Narrower) -->
-    <div class="col-right">
-        
-        <!-- Student Attendance -->
-        <div class="widget-card" style="margin-bottom: 20px;">
-            <div class="widget-title">
-                <span>Student Attendance</span>
+    <div class="db-side">
+        <div class="form-section-card db-panel">
+            <div class="db-card-head compact">
+                <div class="db-card-head-icon is-teal"><i class="fas fa-bolt"></i></div>
+                <div><h4>Quick Actions</h4></div>
             </div>
-            <!-- Mock Progress Bars -->
-            <div style="display:flex; height:30px; border-radius:5px; overflow:hidden; margin-bottom:20px;">
-                <div style="width:50%; background:#14b8a6;"></div>
-                <div style="width:20%; background:#f97316;"></div>
-                <div style="width:15%; background:#a855f7;"></div>
-                <div style="width:15%; background:#22c55e;"></div>
+            <div class="db-quick-grid">
+                <a href="student_add.php" class="db-quick-tile"><i class="fas fa-user-plus"></i><span>Add Student</span></a>
+                <a href="teacher_add.php" class="db-quick-tile"><i class="fas fa-chalkboard-teacher"></i><span>Add Teacher</span></a>
+                <a href="admission_enquiries.php" class="db-quick-tile<?php echo $stats['newEnquiries'] ? ' has-badge' : ''; ?>">
+                    <i class="fas fa-inbox"></i><span>Enquiries</span>
+                    <?php if ($stats['newEnquiries']): ?><em><?php echo $stats['newEnquiries']; ?> new</em><?php endif; ?>
+                </a>
+                <a href="homework.php" class="db-quick-tile"><i class="fas fa-book"></i><span>Homework</span></a>
+                <a href="certificates.php" class="db-quick-tile"><i class="fas fa-certificate"></i><span>Certificates</span></a>
+                <a href="settings.php" class="db-quick-tile"><i class="fas fa-cog"></i><span>Settings</span></a>
             </div>
-            <ul style="font-size:0.9rem; color:var(--text-muted);">
-                <li style="display:flex; justify-content:space-between; margin-bottom:10px;"><span style="color:#14b8a6;">● Present</span> <strong>87%</strong></li>
-                <li style="display:flex; justify-content:space-between; margin-bottom:10px;"><span style="color:#f97316;">● Absent</span> <strong>40%</strong></li>
-                <li style="display:flex; justify-content:space-between; margin-bottom:10px;"><span style="color:#a855f7;">● Late</span> <strong>20%</strong></li>
-                <li style="display:flex; justify-content:space-between; margin-bottom:10px;"><span style="color:#22c55e;">● Half day</span> <strong>20%</strong></li>
-            </ul>
         </div>
 
-        <!-- Upcoming Events -->
-        <div class="widget-card" style="margin-bottom: 20px;">
-            <div class="widget-title">
-                <span>Upcoming Events</span>
-            </div>
-            <div style="border-left: 3px solid #a855f7; padding-left:15px; margin-bottom:15px; display:flex; justify-content:space-between;">
+        <div class="form-section-card db-panel">
+            <div class="db-card-head compact">
+                <div class="db-card-head-icon is-green"><i class="fas fa-receipt"></i></div>
                 <div>
-                    <h5 style="color:var(--text-dark); margin-bottom:5px;">09:00 - 09:45 AM</h5>
-                    <p style="font-size:0.8rem; color:var(--text-muted);">Marketing Strategy Kickoff</p>
-                    <p style="font-size:0.75rem; color:#14b8a6; margin-top:5px;">Lead by Robert Fox</p>
+                    <h4>Recent Payments</h4>
+                    <p>Latest fee collections</p>
                 </div>
-                <button style="border:none; background:#f1f5f9; padding:5px 15px; border-radius:5px; cursor:pointer;">View</button>
+                <a href="fee_collect.php" class="db-card-link">Collect</a>
             </div>
-            <div style="border-left: 3px solid #f97316; padding-left:15px; margin-bottom:15px; display:flex; justify-content:space-between;">
-                <div>
-                    <h5 style="color:var(--text-dark); margin-bottom:5px;">11:15 - 12:00 AM</h5>
-                    <p style="font-size:0.8rem; color:var(--text-muted);">Product Design Brainstorm</p>
-                    <p style="font-size:0.75rem; color:#14b8a6; margin-top:5px;">Lead by Leslie Alexander</p>
+            <?php if ($stats['recentPayments']): ?>
+            <div class="db-payment-list">
+                <?php foreach ($stats['recentPayments'] as $p): ?>
+                <div class="db-payment-item">
+                    <div class="db-payment-icon"><i class="fas fa-rupee-sign"></i></div>
+                    <div class="db-payment-body">
+                        <strong><?php echo htmlspecialchars($p['name']); ?></strong>
+                        <span><?php echo htmlspecialchars($p['receipt_no']); ?> · <?php echo date('d M Y', strtotime($p['payment_date'])); ?></span>
+                    </div>
+                    <div class="db-payment-amt">₹<?php echo number_format($p['amount'], 0); ?></div>
                 </div>
-                <button style="border:none; background:#f1f5f9; padding:5px 15px; border-radius:5px; cursor:pointer;">View</button>
+                <?php endforeach; ?>
             </div>
+            <?php else: ?>
+            <div class="db-empty"><i class="fas fa-receipt"></i><p>No payments yet</p></div>
+            <?php endif; ?>
         </div>
 
-        <!-- Top Teachers -->
-        <div class="widget-card">
-            <div class="widget-title">
-                <span>Top Teachers</span>
-                <i class="fas fa-ellipsis-v" style="color: var(--text-muted); cursor:pointer;"></i>
+        <div class="form-section-card db-panel">
+            <div class="db-card-head compact">
+                <div class="db-card-head-icon is-indigo"><i class="fas fa-users"></i></div>
+                <div><h4>Teachers</h4></div>
+                <a href="teachers.php" class="db-card-link">View all</a>
             </div>
-            <div class="list-item" style="align-items: center;">
-                <img src="https://ui-avatars.com/api/?name=Theresa+Webb&background=random" class="list-avatar">
-                <div class="list-content">
-                    <h5>Theresa Webb</h5>
-                    <p>example@gmail.com</p>
+            <div class="db-teacher-list">
+                <?php foreach ($topTeachers as $t):
+                    $initial = strtoupper(substr($t['name'], 0, 1));
+                ?>
+                <div class="db-teacher-item">
+                    <span class="db-teacher-avatar"><?php echo htmlspecialchars($initial); ?></span>
+                    <div>
+                        <strong><?php echo htmlspecialchars($t['name']); ?></strong>
+                        <small><?php echo htmlspecialchars($t['employee_id']); ?></small>
+                    </div>
+                    <em><?php echo htmlspecialchars($t['subject']); ?></em>
                 </div>
-                <div class="list-meta" style="text-align:right;">
-                    <strong style="font-size:0.85rem;">Mathematics</strong>
-                </div>
-            </div>
-            <div class="list-item" style="align-items: center;">
-                <img src="https://ui-avatars.com/api/?name=Darrell+Steward&background=random" class="list-avatar">
-                <div class="list-content">
-                    <h5>Darrell Steward</h5>
-                    <p>example@gmail.com</p>
-                </div>
-                <div class="list-meta" style="text-align:right;">
-                    <strong style="font-size:0.85rem;">Physics</strong>
-                </div>
+                <?php endforeach; ?>
             </div>
         </div>
-
     </div>
 </div>
 
 <script>
-// ApexCharts Initialization
-document.addEventListener('DOMContentLoaded', function() {
-    
-    // Revenue Statistic Bar Chart
-    var revenueOptions = {
-        series: [{
-            name: 'Total Fee',
-            data: [25, 35, 60, 40, 20, 15, 45, 20, 80, 15, 5, 40]
-        }, {
-            name: 'Collected Fee',
-            data: [15, 10, 24, 30, 25, 10, 15, 10, 25, 10, 5, 20]
-        }],
-        chart: {
-            type: 'bar',
-            height: 350,
-            toolbar: { show: false }
-        },
-        plotOptions: {
-            bar: {
-                horizontal: false,
-                columnWidth: '55%',
-                endingShape: 'rounded'
-            },
-        },
+document.addEventListener('DOMContentLoaded', function () {
+    if (typeof ApexCharts === 'undefined') return;
+    var el = document.querySelector('#revenueChart');
+    if (!el) return;
+    new ApexCharts(el, {
+        series: [{ name: 'Collected', data: <?php echo json_encode($chartData); ?> }],
+        chart: { type: 'bar', height: 280, toolbar: { show: false }, fontFamily: 'Inter, sans-serif' },
+        plotOptions: { bar: { borderRadius: 8, columnWidth: '52%' } },
         dataLabels: { enabled: false },
-        stroke: { show: true, width: 2, colors: ['transparent'] },
+        grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
         xaxis: {
-            categories: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+            categories: <?php echo json_encode($monthNames); ?>,
+            axisBorder: { show: false },
+            axisTicks: { show: false },
+            labels: { style: { colors: '#64748b', fontSize: '12px' } }
         },
-        fill: { opacity: 1 },
-        colors: ['#14b8a6', '#f97316'],
-        legend: { position: 'top' }
-    };
-    var revenueChart = new ApexCharts(document.querySelector("#revenueChart"), revenueOptions);
-    revenueChart.render();
-
-    // User Overview Pie Chart
-    var userOverviewOptions = {
-        series: [60, 30, 10],
-        labels: ['Student', 'Teacher', 'Staffs'],
-        chart: {
-            type: 'donut',
-            width: 280
-        },
-        colors: ['#10b981', '#f59e0b', '#4318ff'],
-        dataLabels: {
-            enabled: true,
-            formatter: function (val) {
-                return val + "%"
+        colors: ['#059669'],
+        yaxis: {
+            labels: {
+                formatter: function (v) { return '₹' + Math.round(v).toLocaleString('en-IN'); },
+                style: { colors: '#64748b', fontSize: '12px' }
             }
         },
-        legend: { show: false }
-    };
-    var userOverviewChart = new ApexCharts(document.querySelector("#userOverviewChart"), userOverviewOptions);
-    userOverviewChart.render();
+        tooltip: {
+            y: { formatter: function (v) { return '₹' + Math.round(v).toLocaleString('en-IN'); } }
+        }
+    }).render();
 });
 </script>
 
-</main>
-</div>
-</body>
-</html>
+<?php require_once 'includes/footer.php'; ?>

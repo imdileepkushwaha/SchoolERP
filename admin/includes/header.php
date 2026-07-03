@@ -1,17 +1,24 @@
 <?php
 // admin/includes/header.php
 require_once __DIR__ . '/init.php';
+require_once __DIR__ . '/../../includes/db_connect.php';
+require_once __DIR__ . '/settings_helpers.php';
 
 $page_title = $page_title ?? 'Dashboard';
 $admin_name = htmlspecialchars(ucfirst($_SESSION['admin_username']));
 $avatar_url = 'https://ui-avatars.com/api/?name=' . urlencode($_SESSION['admin_username']) . '&background=059669&color=fff&bold=true';
+$schoolBrand = getSchoolProfile($pdo);
+$brandLogoUrl = schoolBrandingUrl($schoolBrand['logo'] ?? '', 'admin');
+$brandFaviconUrl = schoolBrandingUrl($schoolBrand['favicon'] ?? '', 'admin');
+$brandTitle = $schoolBrand['name'] ?: 'EduDash';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo htmlspecialchars($page_title); ?> - EduDash</title>
+    <title><?php echo htmlspecialchars($page_title); ?> - <?php echo htmlspecialchars($brandTitle); ?></title>
+    <?php if ($brandFaviconUrl): ?><link rel="icon" href="<?php echo htmlspecialchars($brandFaviconUrl); ?>"><?php endif; ?>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="assets/css/admin.css">
@@ -35,10 +42,11 @@ $avatar_url = 'https://ui-avatars.com/api/?name=' . urlencode($_SESSION['admin_u
             </div>
 
             <div class="header-center">
-                <div class="search-bar">
+                <div class="search-bar" id="globalSearchWrap">
                     <i class="fas fa-search"></i>
-                    <input type="text" placeholder="Search students, teachers, classes...">
+                    <input type="text" id="globalSearchInput" placeholder="Search students, teachers, classes..." autocomplete="off">
                     <kbd class="search-shortcut">Ctrl K</kbd>
+                    <div class="global-search-dropdown" id="globalSearchDropdown" hidden></div>
                 </div>
             </div>
 
@@ -100,7 +108,47 @@ $avatar_url = 'https://ui-avatars.com/api/?name=' . urlencode($_SESSION['admin_u
             if (menu && !menu.contains(e.target)) {
                 menu.classList.remove('open');
             }
+            var searchWrap = document.getElementById('globalSearchWrap');
+            if (searchWrap && !searchWrap.contains(e.target)) {
+                var dd = document.getElementById('globalSearchDropdown');
+                if (dd) dd.hidden = true;
+            }
         });
+
+        (function () {
+            var input = document.getElementById('globalSearchInput');
+            var dropdown = document.getElementById('globalSearchDropdown');
+            if (!input || !dropdown) return;
+            var timer = null;
+            function render(items) {
+                if (!items.length) {
+                    dropdown.innerHTML = '<div class="global-search-empty">No results</div>';
+                    dropdown.hidden = false;
+                    return;
+                }
+                dropdown.innerHTML = items.map(function (it) {
+                    return '<a class="global-search-item" href="' + it.url + '"><i class="fas ' + it.icon + '"></i><div><strong>' + it.title + '</strong><span>' + it.type + ' · ' + it.meta + '</span></div></a>';
+                }).join('');
+                dropdown.hidden = false;
+            }
+            input.addEventListener('input', function () {
+                clearTimeout(timer);
+                var q = input.value.trim();
+                if (q.length < 2) { dropdown.hidden = true; return; }
+                timer = setTimeout(function () {
+                    fetch('search.php?q=' + encodeURIComponent(q))
+                        .then(function (r) { return r.json(); })
+                        .then(function (d) { render(d.results || []); })
+                        .catch(function () {
+                            dropdown.innerHTML = '<div class="global-search-empty">Search unavailable</div>';
+                            dropdown.hidden = false;
+                        });
+                }, 250);
+            });
+            document.addEventListener('keydown', function (e) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); input.focus(); }
+            });
+        })();
         </script>
 
         <div class="admin-content">

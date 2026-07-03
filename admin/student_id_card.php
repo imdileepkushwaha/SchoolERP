@@ -1,8 +1,16 @@
 <?php
 require_once '../includes/db_connect.php';
 require_once 'includes/student_helpers.php';
+require_once 'includes/settings_helpers.php';
 
 ensureStudentSchema($pdo);
+ensureSettingsSchema($pdo);
+$schoolProfile = getSchoolProfile($pdo);
+$schoolLogoUrl = schoolBrandingUrl($schoolProfile['logo'] ?? '', 'admin');
+$schoolDisplayName = $schoolProfile['name'] ?: 'EduDash School';
+$signatory = getDefaultAuthoritySignature($pdo);
+$signatureUrl = schoolBrandingUrl($signatory['signature'] ?? '', 'admin');
+$signatureRole = $signatory['designation'] ?? 'Principal';
 
 if (!isset($_GET['id'])) {
     die('Student ID required.');
@@ -67,9 +75,9 @@ function idCardText($text, $max = 40) {
             <span class="id-card-label">Front Side</span>
             <div class="id-card id-front">
                 <div class="card-top">
-                    <div class="school-logo"><i class="fas fa-graduation-cap"></i></div>
+                    <div class="school-logo"><?php if ($schoolLogoUrl): ?><img src="<?php echo htmlspecialchars($schoolLogoUrl); ?>" alt="Logo"><?php else: ?><i class="fas fa-graduation-cap"></i><?php endif; ?></div>
                     <div class="school-info">
-                        <h1>EduDash School</h1>
+                        <h1><?php echo htmlspecialchars($schoolDisplayName); ?></h1>
                         <p>Student Identity Card · Session <?php echo $academic_year; ?></p>
                     </div>
                     <span class="card-type-badge">Student</span>
@@ -114,8 +122,9 @@ function idCardText($text, $max = 40) {
                         <span class="issue-date">Issued <?php echo date('d M Y'); ?></span>
                     </div>
                     <div class="sign-area">
+                        <?php if ($signatureUrl): ?><img class="sign-img" src="<?php echo htmlspecialchars($signatureUrl); ?>" alt="Signature"><?php endif; ?>
                         <div class="sign-line"></div>
-                        <span>Principal Signature</span>
+                        <span><?php echo htmlspecialchars($signatureRole); ?></span>
                     </div>
                     <div class="id-code-block">
                         <div class="qr-box"><i class="fas fa-qrcode"></i></div>

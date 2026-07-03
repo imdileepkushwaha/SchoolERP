@@ -15,4 +15,6 @@ try {
 } catch(PDOException $e) {
     die("ERROR: Could not connect. " . $e->getMessage());
 }
+
+date_default_timezone_set('Asia/Kolkata');
 ?>

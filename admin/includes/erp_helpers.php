@@ -2,6 +2,7 @@
 // admin/includes/erp_helpers.php — School ERP modules schema & helpers
 
 require_once __DIR__ . '/student_helpers.php';
+require_once __DIR__ . '/teacher_helpers.php';
 
 function ensureErpSchema($pdo) {
     ensureStudentSchema($pdo);
@@ -238,6 +239,88 @@ function ensureErpSchema($pdo) {
         }
     }
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `notices` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `title` varchar(200) NOT NULL,
+        `body` text NOT NULL,
+        `audience` enum('All','Students','Teachers','Staff') NOT NULL DEFAULT 'All',
+        `priority` enum('Normal','Important','Urgent') NOT NULL DEFAULT 'Normal',
+        `status` enum('Active','Inactive') NOT NULL DEFAULT 'Active',
+        `publish_date` date NOT NULL,
+        `created_by` varchar(50) DEFAULT NULL,
+        `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `subjects` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `name` varchar(100) NOT NULL,
+        `code` varchar(20) DEFAULT NULL,
+        `class_name` varchar(50) DEFAULT NULL,
+        `status` enum('Active','Inactive') NOT NULL DEFAULT 'Active',
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `name_class` (`name`,`class_name`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `teacher_attendance` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `teacher_id` int(11) NOT NULL,
+        `attendance_date` date NOT NULL,
+        `status` enum('Present','Absent','Late','Half Day','Leave') NOT NULL DEFAULT 'Present',
+        `remarks` varchar(255) DEFAULT NULL,
+        `check_in_time` time DEFAULT NULL,
+        `check_out_time` time DEFAULT NULL,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `teacher_date` (`teacher_id`,`attendance_date`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $teacherAttCols = [
+        'check_in_time'  => 'TIME DEFAULT NULL',
+        'check_out_time' => 'TIME DEFAULT NULL',
+    ];
+    foreach ($teacherAttCols as $col => $def) {
+        try {
+            $pdo->exec("ALTER TABLE `teacher_attendance` ADD COLUMN `$col` $def");
+        } catch (PDOException $e) {
+        }
+    }
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `leave_requests` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `person_type` enum('Teacher','Student') NOT NULL DEFAULT 'Teacher',
+        `person_id` int(11) NOT NULL,
+        `from_date` date NOT NULL,
+        `to_date` date NOT NULL,
+        `reason` varchar(255) DEFAULT NULL,
+        `status` enum('Pending','Approved','Rejected','Cancelled') NOT NULL DEFAULT 'Pending',
+        `added_by` enum('Teacher','Admin') NOT NULL DEFAULT 'Teacher',
+        `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    try {
+        $pdo->exec("ALTER TABLE `leave_requests` MODIFY COLUMN `status` enum('Pending','Approved','Rejected','Cancelled') NOT NULL DEFAULT 'Pending'");
+    } catch (PDOException $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE `leave_requests` ADD COLUMN `added_by` enum('Teacher','Admin') NOT NULL DEFAULT 'Teacher' AFTER `status`");
+    } catch (PDOException $e) {
+    }
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `admission_enquiries` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `student_name` varchar(100) NOT NULL,
+        `parent_name` varchar(100) DEFAULT NULL,
+        `mobile` varchar(20) NOT NULL,
+        `email` varchar(100) DEFAULT NULL,
+        `class_sought` varchar(50) DEFAULT NULL,
+        `message` text DEFAULT NULL,
+        `status` enum('New','Contacted','Converted','Closed') NOT NULL DEFAULT 'New',
+        `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     erpSeedDefaults($pdo);
 }
 
@@ -262,6 +345,18 @@ function erpSeedDefaults($pdo) {
     $hostelCount = (int) $pdo->query("SELECT COUNT(*) FROM hostels")->fetchColumn();
     if ($hostelCount === 0) {
         $pdo->exec("INSERT INTO hostels (name, address) VALUES ('Boys Hostel', 'Campus Block A'), ('Girls Hostel', 'Campus Block B')");
+    }
+
+    $subjectCount = (int) $pdo->query("SELECT COUNT(*) FROM subjects")->fetchColumn();
+    if ($subjectCount === 0) {
+        $defaults = ['English', 'Hindi', 'Mathematics', 'Science', 'Social Studies', 'Computer'];
+        $stmt = $pdo->prepare("INSERT INTO subjects (name, class_name) VALUES (?, NULL)");
+        foreach ($defaults as $s) {
+            try {
+                $stmt->execute([$s]);
+            } catch (PDOException $e) {
+            }
+        }
     }
 }
 
@@ -384,6 +479,86 @@ function getClassFeeStructure($pdo, $className, $sessionId = null) {
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function isHostelFeeHeadName($headName) {
+    return stripos($headName, 'hostel') !== false;
+}
+
+function isTransportFeeHeadName($headName) {
+    return stripos($headName, 'transport') !== false;
+}
+
+function studentHasActiveHostel($pdo, $studentId) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare("SELECT 1 FROM hostel_allotments WHERE student_id = ? AND status = 'Active' LIMIT 1");
+    $stmt->execute([(int) $studentId]);
+    return (bool) $stmt->fetchColumn();
+}
+
+function studentHasTransportAssignment($pdo, $studentId) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare("SELECT 1 FROM student_transport WHERE student_id = ? LIMIT 1");
+    $stmt->execute([(int) $studentId]);
+    return (bool) $stmt->fetchColumn();
+}
+
+function filterFeeStructureForStudent($pdo, $studentId, array $structure) {
+    $hasHostel = studentHasActiveHostel($pdo, $studentId);
+    $hasTransport = studentHasTransportAssignment($pdo, $studentId);
+    return array_values(array_filter($structure, function ($row) use ($hasHostel, $hasTransport) {
+        $headName = $row['head_name'] ?? '';
+        if (!$hasHostel && isHostelFeeHeadName($headName)) {
+            return false;
+        }
+        if (!$hasTransport && isTransportFeeHeadName($headName)) {
+            return false;
+        }
+        return true;
+    }));
+}
+
+function feeHeadAppliesToStudent($pdo, $studentId, $headName) {
+    if (isHostelFeeHeadName($headName) && !studentHasActiveHostel($pdo, $studentId)) {
+        return false;
+    }
+    if (isTransportFeeHeadName($headName) && !studentHasTransportAssignment($pdo, $studentId)) {
+        return false;
+    }
+    return true;
+}
+
+function getStudentHostelDetails($pdo, $studentId) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare(
+        "SELECT ha.*, hr.room_no, hr.room_type, hr.capacity,
+                h.name AS hostel_name, h.address AS hostel_address,
+                (SELECT COUNT(*) FROM hostel_allotments x WHERE x.room_id = ha.room_id AND x.status = 'Active') AS occupied
+         FROM hostel_allotments ha
+         INNER JOIN hostel_rooms hr ON hr.id = ha.room_id
+         INNER JOIN hostels h ON h.id = hr.hostel_id
+         WHERE ha.student_id = ? AND ha.status = 'Active'
+         LIMIT 1"
+    );
+    $stmt->execute([(int) $studentId]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function getStudentTransportDetails($pdo, $studentId) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare(
+        "SELECT st.*, r.name AS route_name, r.fare,
+                v.vehicle_no, v.model AS vehicle_model, v.driver_name, v.driver_phone,
+                ts.stop_name, ts.pickup_time
+         FROM student_transport st
+         INNER JOIN transport_routes r ON r.id = st.route_id
+         LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
+         LEFT JOIN transport_stops ts ON ts.id = st.stop_id
+         WHERE st.student_id = ?
+         LIMIT 1"
+    );
+    $stmt->execute([(int) $studentId]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
 function getStudentFeeSummary($pdo, $studentId) {
     $student = $pdo->prepare("SELECT * FROM students WHERE id = ?");
     $student->execute([(int) $studentId]);
@@ -393,8 +568,20 @@ function getStudentFeeSummary($pdo, $studentId) {
     }
     $session = getCurrentSession($pdo);
     $structure = getClassFeeStructure($pdo, $student['class'], $session['id'] ?? null);
+    $hasHostel = studentHasActiveHostel($pdo, (int) $studentId);
+    $hasTransport = studentHasTransportAssignment($pdo, (int) $studentId);
+    $feeItems = array_values(array_filter($structure, function ($row) use ($hasHostel, $hasTransport) {
+        $headName = $row['head_name'] ?? '';
+        if (!$hasHostel && isHostelFeeHeadName($headName)) {
+            return false;
+        }
+        if (!$hasTransport && isTransportFeeHeadName($headName)) {
+            return false;
+        }
+        return true;
+    }));
     $totalDue = 0;
-    foreach ($structure as $row) {
+    foreach ($feeItems as $row) {
         $totalDue += (float) $row['amount'];
     }
     $paidStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM fee_payments WHERE student_id = ?");
@@ -402,12 +589,74 @@ function getStudentFeeSummary($pdo, $studentId) {
     $totalPaid = (float) $paidStmt->fetchColumn();
     $payments = $pdo->prepare("SELECT fp.*, fh.name AS head_name FROM fee_payments fp LEFT JOIN fee_heads fh ON fh.id = fp.fee_head_id WHERE fp.student_id = ? ORDER BY fp.payment_date DESC, fp.id DESC");
     $payments->execute([(int) $studentId]);
+    $balance = max(0, $totalDue - $totalPaid);
+    if ($totalDue <= 0) {
+        $feeStatus = 'no_structure';
+    } elseif ($balance <= 0) {
+        $feeStatus = 'cleared';
+    } else {
+        $feeStatus = 'pending';
+    }
     return [
         'student' => $student,
         'total_due' => $totalDue,
         'total_paid' => $totalPaid,
-        'balance' => max(0, $totalDue - $totalPaid),
+        'balance' => $balance,
+        'fee_status' => $feeStatus,
+        'fee_items' => $feeItems,
+        'has_hostel' => $hasHostel,
+        'has_transport' => $hasTransport,
         'payments' => $payments->fetchAll(PDO::FETCH_ASSOC),
+    ];
+}
+
+function examGradeFromPercent($pct) {
+    if ($pct >= 90) return 'A1';
+    if ($pct >= 80) return 'A2';
+    if ($pct >= 70) return 'B1';
+    if ($pct >= 60) return 'B2';
+    if ($pct >= 50) return 'C1';
+    if ($pct >= 40) return 'C2';
+    if ($pct >= 33) return 'D';
+    return 'E';
+}
+
+function getExamsForClass($pdo, $className) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM exams WHERE class_name = ? AND status = 'Active' ORDER BY COALESCE(start_date, '1900-01-01') DESC, id DESC");
+    $stmt->execute([$className]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getStudentExamResult($pdo, $studentId, $examId) {
+    $marks = getStudentMarksForExam($pdo, $studentId, $examId);
+    $totalObt = 0;
+    $totalMax = 0;
+    $entered = 0;
+    $failCount = 0;
+    foreach ($marks as $m) {
+        $totalMax += (int) $m['max_marks'];
+        if ($m['marks_obtained'] !== null && $m['marks_obtained'] !== '') {
+            $entered++;
+            $obt = (float) $m['marks_obtained'];
+            $totalObt += $obt;
+            if ((int) $m['max_marks'] > 0 && ($obt / (int) $m['max_marks'] * 100) < 33) {
+                $failCount++;
+            }
+        }
+    }
+    $pct = $totalMax ? round($totalObt / $totalMax * 100, 2) : 0;
+    return [
+        'marks' => $marks,
+        'subject_count' => count($marks),
+        'entered' => $entered,
+        'published' => $entered > 0,
+        'total_obtained' => $totalObt,
+        'total_max' => $totalMax,
+        'percentage' => $pct,
+        'grade' => examGradeFromPercent($pct),
+        'result' => ($entered > 0 && $failCount === 0) ? 'Pass' : ($entered > 0 ? 'Fail' : '—'),
+        'fail_count' => $failCount,
     ];
 }
 
@@ -547,6 +796,251 @@ function authenticateStudentPortal($pdo, $adNo, $password) {
     return null;
 }
 
+function updateStudentPortalPassword($pdo, $studentId, $currentPassword, $newPassword) {
+    $stmt = $pdo->prepare("SELECT portal_password FROM students WHERE id = ? AND portal_enabled = 1");
+    $stmt->execute([(int) $studentId]);
+    $hash = $stmt->fetchColumn();
+    if (!$hash || !password_verify($currentPassword, $hash)) {
+        return 'Current password is incorrect.';
+    }
+    if (strlen($newPassword) < 6) {
+        return 'New password must be at least 6 characters.';
+    }
+    $pdo->prepare("UPDATE students SET portal_password = ? WHERE id = ?")
+        ->execute([password_hash($newPassword, PASSWORD_DEFAULT), (int) $studentId]);
+    return true;
+}
+
+function getActiveNotices($pdo, $limit = 10, $audience = 'All') {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare(
+        "SELECT * FROM notices WHERE status = 'Active' AND (audience = ? OR audience = 'All')
+         ORDER BY FIELD(priority,'Urgent','Important','Normal'), publish_date DESC LIMIT ?"
+    );
+    $stmt->bindValue(1, $audience);
+    $stmt->bindValue(2, (int) $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getNoticeById($pdo, $id) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM notices WHERE id = ?");
+    $stmt->execute([(int) $id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function noticePriorityBadgeClass($priority) {
+    switch ($priority) {
+        case 'Urgent':
+            return 'badge-inactive';
+        case 'Important':
+            return 'notify-badge-queued';
+        default:
+            return 'badge-active';
+    }
+}
+
+function getAllSubjects($pdo, $className = null) {
+    ensureErpSchema($pdo);
+    if ($className) {
+        $stmt = $pdo->prepare("SELECT * FROM subjects WHERE status='Active' AND (class_name IS NULL OR class_name = ?) ORDER BY name");
+        $stmt->execute([$className]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    return $pdo->query("SELECT * FROM subjects WHERE status='Active' ORDER BY class_name, name")->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getClassTimetableFromTeachers($pdo, $className, $sectionName = 'A') {
+    ensureTeacherSchema($pdo);
+    $stmt = $pdo->prepare(
+        "SELECT tt.*, t.name AS teacher_name, t.employee_id
+         FROM teacher_timetable tt
+         INNER JOIN teachers t ON t.id = tt.teacher_id
+         WHERE tt.class_name = ? AND tt.section_name = ?
+         ORDER BY FIELD(tt.day_of_week,'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'), tt.period_no"
+    );
+    $stmt->execute([$className, $sectionName]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getFeeCollectionReport($pdo, $year = null, $month = null) {
+    ensureErpSchema($pdo);
+    $year = $year ?: (int) date('Y');
+    $sql = "SELECT DATE_FORMAT(payment_date,'%Y-%m') AS ym, SUM(amount) AS total, COUNT(*) AS cnt
+            FROM fee_payments WHERE YEAR(payment_date) = ?";
+    $params = [$year];
+    if ($month) {
+        $sql .= " AND MONTH(payment_date) = ?";
+        $params[] = (int) $month;
+    }
+    $sql .= " GROUP BY ym ORDER BY ym";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getFeeCollectionMonthlyBreakdown($pdo, $year = null) {
+    ensureErpSchema($pdo);
+    $year = $year ?: (int) date('Y');
+    $monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    $indexed = [];
+    foreach (getFeeCollectionReport($pdo, $year) as $row) {
+        $indexed[(int) substr($row['ym'], 5, 2)] = $row;
+    }
+    $months = [];
+    for ($m = 1; $m <= 12; $m++) {
+        $months[] = [
+            'month' => $m,
+            'label' => $monthNames[$m - 1],
+            'ym' => sprintf('%04d-%02d', $year, $m),
+            'total' => (float) ($indexed[$m]['total'] ?? 0),
+            'cnt' => (int) ($indexed[$m]['cnt'] ?? 0),
+        ];
+    }
+    return $months;
+}
+
+function getRecentFeePayments($pdo, $limit = 10, $year = null) {
+    ensureErpSchema($pdo);
+    $limit = max(1, min(50, (int) $limit));
+    $sql = "SELECT fp.id, fp.amount, fp.payment_date, fp.payment_method, fp.receipt_no,
+                   s.id AS student_id, s.name, s.ad_no, s.class,
+                   fh.name AS head_name
+            FROM fee_payments fp
+            INNER JOIN students s ON s.id = fp.student_id
+            LEFT JOIN fee_heads fh ON fh.id = fp.fee_head_id";
+    $params = [];
+    if ($year) {
+        $sql .= " WHERE YEAR(fp.payment_date) = ?";
+        $params[] = (int) $year;
+    }
+    $sql .= " ORDER BY fp.payment_date DESC, fp.id DESC LIMIT " . $limit;
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getFeeDefaulters($pdo, $classFilter = '') {
+    ensureErpSchema($pdo);
+    $session = getCurrentSession($pdo);
+    $students = $pdo->query("SELECT id, ad_no, name, class, section, mobile FROM students WHERE status='Active' ORDER BY class, name")->fetchAll(PDO::FETCH_ASSOC);
+    $defaulters = [];
+    foreach ($students as $s) {
+        if ($classFilter !== '' && $s['class'] !== $classFilter) {
+            continue;
+        }
+        $summary = getStudentFeeSummary($pdo, $s['id']);
+        if ($summary && $summary['balance'] > 0) {
+            $defaulters[] = array_merge($s, [
+                'total_due' => $summary['total_due'],
+                'total_paid' => $summary['total_paid'],
+                'balance' => $summary['balance'],
+            ]);
+        }
+    }
+    return $defaulters;
+}
+
+function getExamClassAnalytics($pdo, $examId) {
+    ensureErpSchema($pdo);
+    $exam = $pdo->prepare("SELECT * FROM exams WHERE id = ?");
+    $exam->execute([(int) $examId]);
+    $exam = $exam->fetch(PDO::FETCH_ASSOC);
+    if (!$exam) {
+        return null;
+    }
+    $students = getStudentsByClassSection($pdo, $exam['class_name']);
+    $subjects = $pdo->prepare("SELECT * FROM exam_subjects WHERE exam_id = ?");
+    $subjects->execute([(int) $examId]);
+    $subjects = $subjects->fetchAll(PDO::FETCH_ASSOC);
+    $results = [];
+    foreach ($students as $st) {
+        $totalObt = 0;
+        $totalMax = 0;
+        foreach ($subjects as $sub) {
+            $m = $pdo->prepare("SELECT marks_obtained FROM student_marks WHERE student_id = ? AND exam_subject_id = ?");
+            $m->execute([$st['id'], $sub['id']]);
+            $obt = (float) ($m->fetchColumn() ?: 0);
+            $totalObt += $obt;
+            $totalMax += (int) $sub['max_marks'];
+        }
+        if ($totalMax <= 0) {
+            continue;
+        }
+        $pct = round($totalObt / $totalMax * 100, 1);
+        $results[] = [
+            'student' => $st,
+            'total_obt' => $totalObt,
+            'total_max' => $totalMax,
+            'percentage' => $pct,
+            'grade' => calculateGrade($totalObt, $totalMax),
+        ];
+    }
+    usort($results, fn($a, $b) => $b['percentage'] <=> $a['percentage']);
+    $passCount = count(array_filter($results, fn($r) => $r['percentage'] >= 33));
+    return [
+        'exam' => $exam,
+        'results' => $results,
+        'pass_count' => $passCount,
+        'fail_count' => count($results) - $passCount,
+        'avg_pct' => count($results) ? round(array_sum(array_column($results, 'percentage')) / count($results), 1) : 0,
+    ];
+}
+
+function getDashboardStats($pdo) {
+    ensureErpSchema($pdo);
+    ensureTeacherSchema($pdo);
+    ensureStudentSchema($pdo);
+    $today = date('Y-m-d');
+    $monthStart = date('Y-m-01');
+
+    $totalStudents = (int) $pdo->query("SELECT COUNT(*) FROM students WHERE status='Active'")->fetchColumn();
+    $totalTeachers = (int) $pdo->query("SELECT COUNT(*) FROM teachers WHERE status='Active'")->fetchColumn();
+
+    $newStudentsMonth = 0;
+    try {
+        $newStudentsMonth = (int) $pdo->query("SELECT COUNT(*) FROM students WHERE created_at >= '$monthStart'")->fetchColumn();
+    } catch (PDOException $e) {
+        // created_at missing on legacy DB — count by admission no year prefix e.g. AD2026
+        $prefix = 'AD' . date('Y');
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM students WHERE ad_no LIKE ?");
+        $stmt->execute([$prefix . '%']);
+        $newStudentsMonth = (int) $stmt->fetchColumn();
+    }
+
+    $feeToday = (float) $pdo->query("SELECT COALESCE(SUM(amount),0) FROM fee_payments WHERE payment_date = '$today'")->fetchColumn();
+    $feeMonth = (float) $pdo->query("SELECT COALESCE(SUM(amount),0) FROM fee_payments WHERE payment_date >= '$monthStart'")->fetchColumn();
+
+    $attToday = $pdo->query("SELECT status, COUNT(*) AS cnt FROM attendance_records WHERE attendance_date = '$today' GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $presentToday = (int) ($attToday['Present'] ?? 0);
+    $absentToday = (int) ($attToday['Absent'] ?? 0);
+
+    $pendingLeaves = (int) $pdo->query("SELECT COUNT(*) FROM leave_requests WHERE status='Pending'")->fetchColumn();
+    $newEnquiries = (int) $pdo->query("SELECT COUNT(*) FROM admission_enquiries WHERE status='New'")->fetchColumn();
+    $portalEnabled = (int) $pdo->query("SELECT COUNT(*) FROM students WHERE portal_enabled=1")->fetchColumn();
+
+    $recentStudents = $pdo->query("SELECT id, ad_no, name, class FROM students ORDER BY id DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);
+    $recentPayments = $pdo->query(
+        "SELECT fp.amount, fp.payment_date, fp.receipt_no, s.name, s.ad_no
+         FROM fee_payments fp INNER JOIN students s ON s.id = fp.student_id
+         ORDER BY fp.id DESC LIMIT 5"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $feeChart = getFeeCollectionReport($pdo, (int) date('Y'));
+    $chartMonths = array_fill(1, 12, 0);
+    foreach ($feeChart as $row) {
+        $m = (int) substr($row['ym'], 5, 2);
+        $chartMonths[$m] = (float) $row['total'];
+    }
+
+    return compact(
+        'totalStudents', 'totalTeachers', 'newStudentsMonth', 'feeToday', 'feeMonth',
+        'presentToday', 'absentToday', 'pendingLeaves', 'newEnquiries', 'portalEnabled',
+        'recentStudents', 'recentPayments', 'chartMonths'
+    );
+}
+
 function getHostelRoomOccupancy($pdo, $roomId) {
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM hostel_allotments WHERE room_id = ? AND status = 'Active'");
     $stmt->execute([(int) $roomId]);
@@ -572,4 +1066,146 @@ function promoteStudentsAdvanced($pdo, $studentIds, $toClass, $toSection, $sessi
         $count++;
     }
     return $count;
+}
+
+function findOverlappingLeaveRequest($pdo, $personType, $personId, $fromDate, $toDate, $excludeId = null) {
+    ensureErpSchema($pdo);
+    $sql = "SELECT * FROM leave_requests
+            WHERE person_type = ? AND person_id = ?
+            AND status IN ('Pending', 'Approved')
+            AND from_date <= ? AND to_date >= ?";
+    $params = [$personType, (int) $personId, $toDate, $fromDate];
+    if ($excludeId !== null) {
+        $sql .= " AND id != ?";
+        $params[] = (int) $excludeId;
+    }
+    $sql .= " ORDER BY from_date ASC LIMIT 1";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function leaveOverlapMessage($conflict) {
+    $from = date('d M Y', strtotime($conflict['from_date']));
+    $to = date('d M Y', strtotime($conflict['to_date']));
+    $status = $conflict['status'] ?? 'Pending';
+    return "These dates overlap with an existing {$status} leave ({$from} – {$to}). Please choose different dates.";
+}
+
+function getLeaveRequestById($pdo, $id) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM leave_requests WHERE id = ?");
+    $stmt->execute([(int) $id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function teacherCanCancelLeave($leave, $today = null) {
+    if (!$leave) {
+        return ['ok' => false, 'error' => 'Leave request not found.'];
+    }
+    $today = $today ?? date('Y-m-d');
+    $st = $leave['status'] ?? '';
+    if ($st === 'Cancelled' || $st === 'Rejected') {
+        return ['ok' => false, 'error' => 'This leave request is already closed.'];
+    }
+    if ($st === 'Pending') {
+        return ['ok' => true];
+    }
+    if ($st === 'Approved') {
+        if ($leave['from_date'] > $today) {
+            return ['ok' => true];
+        }
+        if ($leave['from_date'] <= $today && $leave['to_date'] >= $today) {
+            return ['ok' => false, 'error' => 'Leave in progress cannot be cancelled. Please contact admin.'];
+        }
+        return ['ok' => false, 'error' => 'Past leave cannot be cancelled.'];
+    }
+    return ['ok' => false, 'error' => 'This leave cannot be cancelled.'];
+}
+
+function cancelTeacherLeaveRequest($pdo, $teacherId, $leaveId) {
+    ensureErpSchema($pdo);
+    $leave = getLeaveRequestById($pdo, $leaveId);
+    if (!$leave || $leave['person_type'] !== 'Teacher' || (int) $leave['person_id'] !== (int) $teacherId) {
+        return ['ok' => false, 'error' => 'Leave request not found.'];
+    }
+    $check = teacherCanCancelLeave($leave);
+    if (!$check['ok']) {
+        return $check;
+    }
+    $pdo->prepare("UPDATE leave_requests SET status = 'Cancelled' WHERE id = ?")->execute([(int) $leaveId]);
+    return ['ok' => true];
+}
+
+function adminCanEditLeave($leave) {
+    if (!$leave) {
+        return false;
+    }
+    if (($leave['added_by'] ?? 'Teacher') !== 'Admin') {
+        return false;
+    }
+    return in_array($leave['status'] ?? '', ['Pending', 'Approved'], true);
+}
+
+function adminCanCancelLeave($leave) {
+    if (!$leave) {
+        return false;
+    }
+    return in_array($leave['status'] ?? '', ['Pending', 'Approved'], true);
+}
+
+function cancelAdminLeaveRequest($pdo, $leaveId) {
+    ensureErpSchema($pdo);
+    $leave = getLeaveRequestById($pdo, $leaveId);
+    if (!adminCanCancelLeave($leave)) {
+        return ['ok' => false, 'error' => 'This leave cannot be cancelled.'];
+    }
+    $pdo->prepare("UPDATE leave_requests SET status = 'Cancelled' WHERE id = ?")->execute([(int) $leaveId]);
+    return ['ok' => true];
+}
+
+function updateAdminLeaveRequest($pdo, $leaveId, $personType, $personId, $fromDate, $toDate, $reason) {
+    ensureErpSchema($pdo);
+    $leave = getLeaveRequestById($pdo, $leaveId);
+    if (!$leave || !adminCanEditLeave($leave)) {
+        return ['ok' => false, 'error' => 'Only admin-added leave in pending or approved status can be edited.'];
+    }
+    if ($fromDate === '' || $toDate === '') {
+        return ['ok' => false, 'error' => 'From and to dates are required.'];
+    }
+    if (strtotime($fromDate) > strtotime($toDate)) {
+        return ['ok' => false, 'error' => 'From date cannot be after to date.'];
+    }
+    $conflict = findOverlappingLeaveRequest($pdo, $personType, $personId, $fromDate, $toDate, $leaveId);
+    if ($conflict) {
+        return ['ok' => false, 'error' => leaveOverlapMessage($conflict)];
+    }
+    $pdo->prepare(
+        "UPDATE leave_requests SET person_type = ?, person_id = ?, from_date = ?, to_date = ?, reason = ? WHERE id = ?"
+    )->execute([
+        $personType,
+        (int) $personId,
+        $fromDate,
+        $toDate,
+        trim($reason) !== '' ? trim($reason) : null,
+        (int) $leaveId,
+    ]);
+    return ['ok' => true];
+}
+
+function leaveRequestDays($fromDate, $toDate) {
+    return max(1, (int) ((strtotime($toDate) - strtotime($fromDate)) / 86400) + 1);
+}
+
+function leaveStatusBadgeClass($status) {
+    switch ($status) {
+        case 'Approved':
+            return 'badge-active';
+        case 'Rejected':
+            return 'badge-inactive';
+        case 'Cancelled':
+            return 'badge-cancelled';
+        default:
+            return 'notify-badge-queued';
+    }
 }

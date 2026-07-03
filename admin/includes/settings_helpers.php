@@ -8,6 +8,128 @@ function ensureSettingsSchema($pdo) {
         `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
         PRIMARY KEY (`setting_key`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    ensureSignatureSchema($pdo);
+}
+
+function ensureSignatureSchema($pdo) {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `authority_signatures` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `name` varchar(120) NOT NULL,
+        `designation` varchar(120) NOT NULL,
+        `signature` varchar(255) DEFAULT NULL,
+        `is_default` tinyint(1) NOT NULL DEFAULT 0,
+        `sort_order` int(11) NOT NULL DEFAULT 0,
+        `status` enum('Active','Inactive') NOT NULL DEFAULT 'Active',
+        `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $done = true;
+}
+
+function getAuthoritySignatures($pdo, $activeOnly = false) {
+    ensureSignatureSchema($pdo);
+    $sql = "SELECT * FROM authority_signatures";
+    if ($activeOnly) {
+        $sql .= " WHERE status = 'Active'";
+    }
+    $sql .= " ORDER BY is_default DESC, sort_order ASC, id ASC";
+    return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getAuthoritySignatureById($pdo, $id) {
+    ensureSignatureSchema($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM authority_signatures WHERE id = ?");
+    $stmt->execute([(int) $id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function getDefaultAuthoritySignature($pdo) {
+    ensureSignatureSchema($pdo);
+    $row = $pdo->query("SELECT * FROM authority_signatures WHERE status = 'Active' AND is_default = 1 ORDER BY id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
+        $row = $pdo->query("SELECT * FROM authority_signatures WHERE status = 'Active' ORDER BY sort_order ASC, id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    }
+    return $row ?: null;
+}
+
+function saveAuthoritySignature($pdo, $id, array $data) {
+    ensureSignatureSchema($pdo);
+    $name = trim($data['name'] ?? '');
+    $designation = trim($data['designation'] ?? '');
+    $sortOrder = (int) ($data['sort_order'] ?? 0);
+    $status = ($data['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
+    if ($id) {
+        $pdo->prepare("UPDATE authority_signatures SET name = ?, designation = ?, sort_order = ?, status = ? WHERE id = ?")
+            ->execute([$name, $designation, $sortOrder, $status, (int) $id]);
+        if (array_key_exists('signature', $data) && $data['signature'] !== null) {
+            $pdo->prepare("UPDATE authority_signatures SET signature = ? WHERE id = ?")->execute([$data['signature'], (int) $id]);
+        }
+        return (int) $id;
+    }
+    $pdo->prepare("INSERT INTO authority_signatures (name, designation, signature, sort_order, status) VALUES (?,?,?,?,?)")
+        ->execute([$name, $designation, $data['signature'] ?? null, $sortOrder, $status]);
+    $newId = (int) $pdo->lastInsertId();
+    // First signature becomes default automatically
+    $count = (int) $pdo->query("SELECT COUNT(*) FROM authority_signatures")->fetchColumn();
+    if ($count === 1) {
+        setDefaultAuthoritySignature($pdo, $newId);
+    }
+    return $newId;
+}
+
+function setDefaultAuthoritySignature($pdo, $id) {
+    ensureSignatureSchema($pdo);
+    $pdo->exec("UPDATE authority_signatures SET is_default = 0");
+    $pdo->prepare("UPDATE authority_signatures SET is_default = 1, status = 'Active' WHERE id = ?")->execute([(int) $id]);
+}
+
+function deleteAuthoritySignature($pdo, $id) {
+    $row = getAuthoritySignatureById($pdo, $id);
+    if (!$row) {
+        return;
+    }
+    if (!empty($row['signature'])) {
+        deleteSchoolBrandingFile($row['signature']);
+    }
+    $pdo->prepare("DELETE FROM authority_signatures WHERE id = ?")->execute([(int) $id]);
+    // If we removed the default, promote another active signature
+    if ((int) $row['is_default'] === 1) {
+        $next = $pdo->query("SELECT id FROM authority_signatures WHERE status = 'Active' ORDER BY sort_order ASC, id ASC LIMIT 1")->fetchColumn();
+        if ($next) {
+            setDefaultAuthoritySignature($pdo, (int) $next);
+        }
+    }
+}
+
+function uploadSignatureFile(array $file) {
+    if (empty($file['name']) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return null;
+    }
+    $allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    if (!in_array($mime, $allowed, true)) {
+        return false;
+    }
+    if (($file['size'] ?? 0) > 2 * 1024 * 1024) {
+        return false;
+    }
+    $dir = __DIR__ . '/../uploads/signatures/';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    $extMap = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    $ext = $extMap[$mime] ?? 'png';
+    $filename = 'sign_' . time() . '_' . mt_rand(100, 999) . '.' . $ext;
+    if (move_uploaded_file($file['tmp_name'], $dir . $filename)) {
+        return 'uploads/signatures/' . $filename;
+    }
+    return false;
 }
 
 function getSetting($pdo, $key, $default = '') {
@@ -79,6 +201,100 @@ function getWhatsAppSettings($pdo) {
         'business_number'  => getSetting($pdo, 'whatsapp_business_number'),
         'api_url'          => getSetting($pdo, 'whatsapp_api_url'),
     ];
+}
+
+function getSchoolProfile($pdo) {
+    return [
+        'name'       => getSetting($pdo, 'school_name', 'EduDash School'),
+        'tagline'    => getSetting($pdo, 'school_tagline', 'Excellence in Education'),
+        'address'    => getSetting($pdo, 'school_address', ''),
+        'phone'      => getSetting($pdo, 'school_phone', ''),
+        'email'      => getSetting($pdo, 'school_email', ''),
+        'website'    => getSetting($pdo, 'school_website', ''),
+        'principal'  => getSetting($pdo, 'school_principal', ''),
+        'affiliation'=> getSetting($pdo, 'school_affiliation', 'CBSE'),
+        'logo'       => getSetting($pdo, 'school_logo', ''),
+        'favicon'    => getSetting($pdo, 'school_favicon', ''),
+    ];
+}
+
+function schoolBrandingUrl($relativePath, $context = 'admin') {
+    if ($relativePath === '' || $relativePath === null) {
+        return '';
+    }
+    if (preg_match('#^https?://#i', $relativePath)) {
+        return $relativePath;
+    }
+    $path = ltrim($relativePath, '/');
+    if ($context === 'portal' || $context === 'teacher') {
+        return '../admin/' . $path;
+    }
+    return $path;
+}
+
+function uploadSchoolBrandingFile(array $file, $type = 'logo') {
+    if (empty($file['name']) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return null;
+    }
+    $allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/x-icon', 'image/vnd.microsoft.icon'];
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    if (!in_array($mime, $allowed, true)) {
+        return false;
+    }
+    $maxSize = ($type === 'favicon') ? 512 * 1024 : 2 * 1024 * 1024;
+    if (($file['size'] ?? 0) > $maxSize) {
+        return false;
+    }
+    $dir = __DIR__ . '/../uploads/branding/';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    $extMap = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/x-icon' => 'ico',
+        'image/vnd.microsoft.icon' => 'ico',
+    ];
+    $ext = $extMap[$mime] ?? 'png';
+    $prefix = $type === 'favicon' ? 'favicon' : 'logo';
+    $filename = $prefix . '_' . time() . '.' . $ext;
+    if (move_uploaded_file($file['tmp_name'], $dir . $filename)) {
+        return 'uploads/branding/' . $filename;
+    }
+    return false;
+}
+
+function deleteSchoolBrandingFile($relativePath) {
+    if ($relativePath === '' || preg_match('#^https?://#i', $relativePath)) {
+        return;
+    }
+    $full = __DIR__ . '/../' . ltrim($relativePath, '/');
+    if (is_file($full)) {
+        @unlink($full);
+    }
+}
+
+function saveSchoolProfile($pdo, array $data) {
+    saveSettingsGroup($pdo, [
+        'school_name'        => $data['name'] ?? '',
+        'school_tagline'     => $data['tagline'] ?? '',
+        'school_address'     => $data['address'] ?? '',
+        'school_phone'       => $data['phone'] ?? '',
+        'school_email'       => $data['email'] ?? '',
+        'school_website'     => $data['website'] ?? '',
+        'school_principal'   => $data['principal'] ?? '',
+        'school_affiliation' => $data['affiliation'] ?? '',
+    ]);
+    if (array_key_exists('logo', $data)) {
+        setSetting($pdo, 'school_logo', $data['logo'] ?? '');
+    }
+    if (array_key_exists('favicon', $data)) {
+        setSetting($pdo, 'school_favicon', $data['favicon'] ?? '');
+    }
 }
 
 function changeAdminPassword($pdo, $adminId, $currentPassword, $newPassword, $confirmPassword) {
