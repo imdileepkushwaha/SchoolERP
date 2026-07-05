@@ -44,7 +44,7 @@ $brandTitle = $schoolBrand['name'] ?: 'EduDash';
             <div class="header-center">
                 <div class="search-bar" id="globalSearchWrap">
                     <i class="fas fa-search"></i>
-                    <input type="text" id="globalSearchInput" placeholder="Search students, teachers, classes..." autocomplete="off">
+                    <input type="text" id="globalSearchInput" placeholder="Search students, teachers, pages..." autocomplete="off">
                     <kbd class="search-shortcut">Ctrl K</kbd>
                     <div class="global-search-dropdown" id="globalSearchDropdown" hidden></div>
                 </div>
