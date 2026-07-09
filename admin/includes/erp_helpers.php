@@ -37,20 +37,47 @@ function ensureErpSchema($pdo) {
         `id` int(11) NOT NULL AUTO_INCREMENT,
         `name` varchar(100) NOT NULL,
         `description` varchar(255) DEFAULT NULL,
+        `is_optional` tinyint(1) NOT NULL DEFAULT 0,
+        `is_one_time` tinyint(1) NOT NULL DEFAULT 0,
         `status` enum('Active','Inactive') NOT NULL DEFAULT 'Active',
         PRIMARY KEY (`id`),
         UNIQUE KEY `name` (`name`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    try {
+        $pdo->exec("ALTER TABLE `fee_heads` ADD COLUMN `is_optional` tinyint(1) NOT NULL DEFAULT 0 AFTER `description`");
+    } catch (PDOException $e) {
+    }
+    try {
+        $pdo->exec("ALTER TABLE `fee_heads` ADD COLUMN `is_one_time` tinyint(1) NOT NULL DEFAULT 0 AFTER `is_optional`");
+    } catch (PDOException $e) {
+    }
+    migrateLegacyFeeHeadFlags($pdo);
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS `fee_structures` (
         `id` int(11) NOT NULL AUTO_INCREMENT,
         `class_name` varchar(50) NOT NULL,
         `fee_head_id` int(11) NOT NULL,
         `amount` decimal(10,2) NOT NULL DEFAULT 0.00,
+        `month` tinyint NOT NULL DEFAULT 1,
         `session_id` int(11) DEFAULT NULL,
         PRIMARY KEY (`id`),
-        UNIQUE KEY `class_fee` (`class_name`,`fee_head_id`,`session_id`)
+        UNIQUE KEY `class_fee_month` (`class_name`,`fee_head_id`,`session_id`,`month`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    try {
+        $pdo->exec("ALTER TABLE `fee_structures` ADD COLUMN `month` tinyint NOT NULL DEFAULT 1 AFTER `amount`");
+    } catch (PDOException $e) {
+    }
+    try {
+        $pdo->exec("ALTER TABLE `fee_structures` DROP INDEX `class_fee`");
+    } catch (PDOException $e) {
+    }
+    try {
+        $pdo->exec("ALTER TABLE `fee_structures` ADD UNIQUE KEY `class_fee_month` (`class_name`,`fee_head_id`,`session_id`,`month`)");
+    } catch (PDOException $e) {
+    }
+    migrateLegacyFeeStructuresToMonthly($pdo);
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS `fee_payments` (
         `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -58,6 +85,7 @@ function ensureErpSchema($pdo) {
         `fee_head_id` int(11) DEFAULT NULL,
         `amount` decimal(10,2) NOT NULL,
         `payment_date` date NOT NULL,
+        `fee_month` tinyint(2) unsigned DEFAULT NULL,
         `payment_method` varchar(30) DEFAULT 'Cash',
         `receipt_no` varchar(30) NOT NULL,
         `session_id` int(11) DEFAULT NULL,
@@ -67,6 +95,9 @@ function ensureErpSchema($pdo) {
         UNIQUE KEY `receipt_no` (`receipt_no`),
         KEY `student_id` (`student_id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    ensureFeePaymentsFeeMonthColumn($pdo);
+    migrateFeeMonthFromPaymentRemarks($pdo);
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS `exams` (
         `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -335,10 +366,16 @@ function erpSeedDefaults($pdo) {
 
     $feeCount = (int) $pdo->query("SELECT COUNT(*) FROM fee_heads")->fetchColumn();
     if ($feeCount === 0) {
-        $heads = ['Tuition Fee', 'Admission Fee', 'Exam Fee', 'Transport Fee', 'Hostel Fee'];
-        $stmt = $pdo->prepare("INSERT INTO fee_heads (name) VALUES (?)");
-        foreach ($heads as $h) {
-            $stmt->execute([$h]);
+        $defaults = [
+            ['Tuition Fee', 0, 0],
+            ['Admission Fee', 0, 1],
+            ['Exam Fee', 0, 0],
+            ['Transport Fee', 1, 0],
+            ['Hostel Fee', 1, 0],
+        ];
+        $stmt = $pdo->prepare("INSERT INTO fee_heads (name, is_optional, is_one_time) VALUES (?,?,?)");
+        foreach ($defaults as $row) {
+            $stmt->execute($row);
         }
     }
 
@@ -388,13 +425,305 @@ function calculateGrade($obtained, $max) {
     return 'F';
 }
 
+function ensureFeePaymentsFeeMonthColumn($pdo) {
+    if (feePaymentsHasFeeMonthColumn($pdo)) {
+        return true;
+    }
+    try {
+        $pdo->exec("ALTER TABLE `fee_payments` ADD COLUMN `fee_month` tinyint(2) unsigned DEFAULT NULL AFTER `payment_date`");
+    } catch (PDOException $e) {
+        try {
+            $pdo->exec("ALTER TABLE `fee_payments` ADD COLUMN `fee_month` tinyint(2) unsigned DEFAULT NULL");
+        } catch (PDOException $e2) {
+            return false;
+        }
+    }
+    return feePaymentsHasFeeMonthColumn($pdo);
+}
+
+function feePaymentsHasFeeMonthColumn($pdo) {
+    try {
+        $cols = $pdo->query('SHOW COLUMNS FROM `fee_payments`')->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($cols as $col) {
+            if (strcasecmp((string) ($col['Field'] ?? ''), 'fee_month') === 0) {
+                return true;
+            }
+        }
+    } catch (PDOException $e) {
+    }
+    return false;
+}
+
+function feeMonthTagForRemarks(int $feeMonth): string {
+    return '[fee_month:' . $feeMonth . ']';
+}
+
+function feeMonthFromRemarks($remarks): int {
+    $remarks = (string) $remarks;
+    if ($remarks === '') {
+        return 0;
+    }
+    if (preg_match('/\[fee_month:(\d{1,2})\]/i', $remarks, $match)) {
+        $month = (int) $match[1];
+        if ($month >= 1 && $month <= 12) {
+            return $month;
+        }
+    }
+    return 0;
+}
+
+function appendFeeMonthToRemarks(int $feeMonth, string $remarks = ''): string {
+    $remarks = trim(preg_replace('/\[fee_month:\d{1,2}\]\s*/i', '', (string) $remarks));
+    $tag = feeMonthTagForRemarks($feeMonth);
+    return $remarks === '' ? $tag : $tag . ' ' . $remarks;
+}
+
+function formatPaymentRemarksForDisplay($remarks): string {
+    $remarks = trim((string) $remarks);
+    if ($remarks === '') {
+        return '';
+    }
+    return trim(preg_replace('/\[fee_month:\d{1,2}\]\s*/i', '', $remarks));
+}
+
+function migrateFeeMonthBackfillCleanup($pdo) {
+    if (!function_exists('getSetting')) {
+        return;
+    }
+    if (getSetting($pdo, 'fee_month_backfill_cleanup_v1', '') === '1') {
+        return;
+    }
+    ensureFeePaymentsFeeMonthColumn($pdo);
+    try {
+        $pdo->exec(
+            "UPDATE fee_payments
+             SET fee_month = NULL
+             WHERE fee_month IS NOT NULL
+               AND fee_month = MONTH(payment_date)
+               AND (remarks IS NULL OR remarks NOT LIKE '%[fee_month:%')"
+        );
+        setSetting($pdo, 'fee_month_backfill_cleanup_v1', '1');
+    } catch (PDOException $e) {
+    }
+}
+
+function migrateFeeMonthFromPaymentRemarks($pdo) {
+    ensureFeePaymentsFeeMonthColumn($pdo);
+    try {
+        $stmt = $pdo->query(
+            "SELECT id, fee_month, remarks FROM fee_payments WHERE remarks LIKE '%[fee_month:%'"
+        );
+        $update = $pdo->prepare('UPDATE fee_payments SET fee_month = ? WHERE id = ?');
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $month = feeMonthFromRemarks($row['remarks'] ?? '');
+            if ($month >= 1 && $month <= 12 && (int) ($row['fee_month'] ?? 0) !== $month) {
+                $update->execute([$month, (int) $row['id']]);
+            }
+        }
+    } catch (PDOException $e) {
+    }
+}
+
+function persistPaymentFeeMonth($pdo, int $paymentId, int $feeMonth): bool {
+    $studentStmt = $pdo->prepare('SELECT student_id FROM fee_payments WHERE id = ? LIMIT 1');
+    $studentStmt->execute([$paymentId]);
+    $studentId = (int) $studentStmt->fetchColumn();
+    if ($studentId <= 0) {
+        return false;
+    }
+    return assignPaymentFeeMonth($pdo, $paymentId, $studentId, $feeMonth);
+}
+
+function assignPaymentFeeMonth($pdo, int $paymentId, int $studentId, int $feeMonth): bool {
+    if ($paymentId <= 0 || $studentId <= 0 || $feeMonth < 1 || $feeMonth > 12) {
+        return false;
+    }
+
+    $own = $pdo->prepare('SELECT id, remarks, fee_month FROM fee_payments WHERE id = ? AND student_id = ? LIMIT 1');
+    $own->execute([$paymentId, $studentId]);
+    $ownRow = $own->fetch(PDO::FETCH_ASSOC);
+    if (!$ownRow) {
+        return false;
+    }
+
+    $newRemarks = appendFeeMonthToRemarks($feeMonth, $ownRow['remarks'] ?? '');
+    $hasColumn = ensureFeePaymentsFeeMonthColumn($pdo);
+
+    try {
+        if ($hasColumn) {
+            $stmt = $pdo->prepare('UPDATE fee_payments SET fee_month = ?, remarks = ? WHERE id = ? AND student_id = ?');
+            $stmt->bindValue(1, $feeMonth, PDO::PARAM_INT);
+            $stmt->bindValue(2, $newRemarks);
+            $stmt->bindValue(3, $paymentId, PDO::PARAM_INT);
+            $stmt->bindValue(4, $studentId, PDO::PARAM_INT);
+        } else {
+            $stmt = $pdo->prepare('UPDATE fee_payments SET remarks = ? WHERE id = ? AND student_id = ?');
+            $stmt->bindValue(1, $newRemarks);
+            $stmt->bindValue(2, $paymentId, PDO::PARAM_INT);
+            $stmt->bindValue(3, $studentId, PDO::PARAM_INT);
+        }
+        $stmt->execute();
+
+        $verify = $pdo->prepare('SELECT fee_month, remarks FROM fee_payments WHERE id = ? AND student_id = ? LIMIT 1');
+        $verify->execute([$paymentId, $studentId]);
+        $savedRow = $verify->fetch(PDO::FETCH_ASSOC) ?: [];
+        $savedMonth = (int) ($savedRow['fee_month'] ?? 0);
+        $remarksMonth = feeMonthFromRemarks($savedRow['remarks'] ?? '');
+
+        if ($hasColumn && $savedMonth === $feeMonth) {
+            return true;
+        }
+        return $remarksMonth === $feeMonth;
+    } catch (PDOException $e) {
+        return false;
+    }
+}
+
 function generateReceiptNo($pdo) {
-    $prefix = 'RCP' . date('Ymd');
+    $prefix = 'RCP' . date('Ym');
     $stmt = $pdo->prepare("SELECT receipt_no FROM fee_payments WHERE receipt_no LIKE ? ORDER BY id DESC LIMIT 1");
     $stmt->execute([$prefix . '%']);
     $last = $stmt->fetchColumn();
     $seq = ($last && strlen($last) > strlen($prefix)) ? (int) substr($last, strlen($prefix)) + 1 : 1;
     return $prefix . str_pad($seq, 4, '0', STR_PAD_LEFT);
+}
+
+function getStudentMonthlyPaymentsMap($pdo, $studentId) {
+    $stmt = $pdo->prepare(
+        "SELECT fee_month, amount, remarks
+         FROM fee_payments
+         WHERE student_id = ?"
+    );
+    $stmt->execute([(int) $studentId]);
+    $map = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $month = (int) ($row['fee_month'] ?? 0);
+        if ($month < 1 || $month > 12) {
+            $month = feeMonthFromRemarks($row['remarks'] ?? '');
+        }
+        if ($month >= 1 && $month <= 12) {
+            $map[$month] = ($map[$month] ?? 0.0) + (float) ($row['amount'] ?? 0);
+        }
+    }
+    return $map;
+}
+
+function paymentRecordFeeMonth(array $payment): int {
+    foreach (['fee_month', 'payment_fee_month'] as $key) {
+        if (!array_key_exists($key, $payment) || $payment[$key] === null || $payment[$key] === '') {
+            continue;
+        }
+        $month = (int) $payment[$key];
+        if ($month >= 1 && $month <= 12) {
+            return $month;
+        }
+    }
+    return feeMonthFromRemarks($payment['remarks'] ?? '');
+}
+
+function feeMonthPaymentBalance($due, $paid) {
+    $due = (float) $due;
+    $paid = (float) $paid;
+    if ($due <= 0) {
+        return 0.0;
+    }
+    if ($paid >= ($due - 0.009)) {
+        return 0.0;
+    }
+    return max(0, $due - $paid);
+}
+
+function feeMonthPaymentStatus($due, $paid) {
+    $due = (float) $due;
+    $paid = (float) $paid;
+    if ($due <= 0) {
+        return 'none';
+    }
+    if ($paid >= ($due - 0.009)) {
+        return 'paid';
+    }
+    if ($paid > 0.009) {
+        return 'partial';
+    }
+    return 'pending';
+}
+
+function getStudentMonthlyFeeStatuses($pdo, $studentId) {
+    $summary = getStudentFeeSummary($pdo, (int) $studentId);
+    if (!$summary) {
+        return [];
+    }
+
+    $paidByMonth = getStudentMonthlyPaymentsMap($pdo, (int) $studentId);
+
+    $monthlyBreakdown = $summary['monthly_breakdown'] ?? [];
+    $dueByMonth = [];
+    foreach ($monthlyBreakdown as $mb) {
+        $dueByMonth[(int) $mb['month']] = (float) ($mb['total'] ?? 0);
+    }
+
+    $statuses = [];
+    foreach (getFeeMonthOrder() as $month) {
+        $due = (float) ($dueByMonth[$month] ?? 0);
+        $paid = (float) ($paidByMonth[$month] ?? 0);
+        $balance = feeMonthPaymentBalance($due, $paid);
+        $status = feeMonthPaymentStatus($due, $paid);
+        $statuses[] = [
+            'month' => $month,
+            'label' => getFeeMonthLabels()[$month] ?? (string) $month,
+            'due' => $due,
+            'paid' => $paid,
+            'balance' => $balance,
+            'is_cleared' => $status === 'paid',
+            'is_partial' => $status === 'partial',
+            'status' => $status,
+        ];
+    }
+    return $statuses;
+}
+
+function getStudentMonthFeeBreakdown($pdo, $studentId, $feeMonth) {
+    $feeMonth = (int) $feeMonth;
+    if ($feeMonth < 1 || $feeMonth > 12) {
+        return null;
+    }
+
+    $summary = getStudentFeeSummary($pdo, (int) $studentId);
+    if (!$summary) {
+        return null;
+    }
+
+    $headLines = [];
+    foreach ($summary['fee_items'] as $item) {
+        $due = (float) ($item['months'][$feeMonth] ?? 0);
+        if ($due <= 0) {
+            continue;
+        }
+        $headLines[] = [
+            'fee_head_id' => (int) $item['fee_head_id'],
+            'head_name' => $item['head_name'],
+            'due' => $due,
+            'is_optional' => !empty($item['is_optional']),
+            'is_one_time' => !empty($item['is_one_time']),
+        ];
+    }
+
+    $paidByMonth = getStudentMonthlyPaymentsMap($pdo, (int) $studentId);
+    $monthPaid = (float) ($paidByMonth[$feeMonth] ?? 0);
+    $monthDue = array_sum(array_column($headLines, 'due'));
+    $monthBalance = feeMonthPaymentBalance($monthDue, $monthPaid);
+
+    return [
+        'month' => $feeMonth,
+        'label' => getFeeMonthLabels()[$feeMonth] ?? (string) $feeMonth,
+        'head_lines' => $headLines,
+        'month_due' => $monthDue,
+        'month_paid' => $monthPaid,
+        'month_balance' => $monthBalance,
+        'is_cleared' => feeMonthPaymentStatus($monthDue, $monthPaid) === 'paid',
+        'status' => feeMonthPaymentStatus($monthDue, $monthPaid),
+        'session' => getCurrentSession($pdo),
+    ];
 }
 
 function generateCertificateNo($pdo, $type) {
@@ -467,16 +796,205 @@ function getFeeHeads($pdo) {
     return $pdo->query("SELECT * FROM fee_heads WHERE status = 'Active' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function getFeeHeadById($pdo, $headId) {
+    $stmt = $pdo->prepare("SELECT * FROM fee_heads WHERE id = ? AND status = 'Active'");
+    $stmt->execute([(int) $headId]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+function addFeeHead($pdo, $name, $isOptional = false, $isOneTime = false) {
+    $stmt = $pdo->prepare("INSERT INTO fee_heads (name, is_optional, is_one_time) VALUES (?,?,?)");
+    $stmt->execute([trim($name), $isOptional ? 1 : 0, $isOneTime ? 1 : 0]);
+    return (int) $pdo->lastInsertId();
+}
+
+function updateFeeHead($pdo, $headId, $name, $isOptional = false, $isOneTime = false) {
+    $stmt = $pdo->prepare(
+        "UPDATE fee_heads SET name = ?, is_optional = ?, is_one_time = ? WHERE id = ? AND status = 'Active'"
+    );
+    $stmt->execute([trim($name), $isOptional ? 1 : 0, $isOneTime ? 1 : 0, (int) $headId]);
+    return $stmt->rowCount() > 0;
+}
+
+function deleteFeeHead($pdo, $headId) {
+    $headId = (int) $headId;
+    if ($headId <= 0) {
+        return ['ok' => false, 'message' => 'Invalid fee head.'];
+    }
+    $head = getFeeHeadById($pdo, $headId);
+    if (!$head) {
+        return ['ok' => false, 'message' => 'Fee head not found.'];
+    }
+    $payStmt = $pdo->prepare("SELECT COUNT(*) FROM fee_payments WHERE fee_head_id = ?");
+    $payStmt->execute([$headId]);
+    $paymentCount = (int) $payStmt->fetchColumn();
+    if ($paymentCount > 0) {
+        $pdo->prepare("UPDATE fee_heads SET status = 'Inactive' WHERE id = ?")->execute([$headId]);
+        return [
+            'ok' => true,
+            'soft' => true,
+            'message' => 'Fee head deactivated (used in ' . $paymentCount . ' payment(s)). History preserved.',
+        ];
+    }
+    $pdo->prepare("DELETE FROM fee_structures WHERE fee_head_id = ?")->execute([$headId]);
+    $pdo->prepare("DELETE FROM fee_heads WHERE id = ?")->execute([$headId]);
+    return ['ok' => true, 'soft' => false, 'message' => 'Fee head deleted.'];
+}
+
+function migrateLegacyFeeHeadFlags($pdo) {
+    $pdo->exec(
+        "UPDATE fee_heads SET is_optional = 1
+         WHERE is_optional = 0 AND (name LIKE '%hostel%' OR name LIKE '%transport%')"
+    );
+    $pdo->exec(
+        "UPDATE fee_heads SET is_one_time = 1
+         WHERE is_one_time = 0 AND name LIKE '%admission%'"
+    );
+}
+
+function getFeeMonthLabels() {
+    return [
+        1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'May', 6 => 'Jun',
+        7 => 'Jul', 8 => 'Aug', 9 => 'Sep', 10 => 'Oct', 11 => 'Nov', 12 => 'Dec',
+    ];
+}
+
+/** Academic session order: April through March */
+function getFeeMonthOrder() {
+    return [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
+}
+
+function migrateLegacyFeeStructuresToMonthly($pdo) {
+    $rows = $pdo->query(
+        "SELECT fs.* FROM fee_structures fs
+         WHERE (SELECT COUNT(*) FROM fee_structures x
+                WHERE x.class_name = fs.class_name AND x.fee_head_id = fs.fee_head_id
+                AND (x.session_id <=> fs.session_id)) = 1"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    if (!$rows) {
+        return;
+    }
+    $insert = $pdo->prepare(
+        "INSERT INTO fee_structures (class_name, fee_head_id, amount, month, session_id) VALUES (?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount)"
+    );
+    foreach ($rows as $row) {
+        $month = (int) ($row['month'] ?? 1);
+        for ($m = 1; $m <= 12; $m++) {
+            if ($m === $month) {
+                continue;
+            }
+            $insert->execute([
+                $row['class_name'],
+                (int) $row['fee_head_id'],
+                (float) $row['amount'],
+                $m,
+                $row['session_id'],
+            ]);
+        }
+    }
+}
+
 function getClassFeeStructure($pdo, $className, $sessionId = null) {
     $sessionId = $sessionId ?: (getCurrentSession($pdo)['id'] ?? null);
     $stmt = $pdo->prepare(
-        "SELECT fs.*, fh.name AS head_name FROM fee_structures fs
+        "SELECT fs.*, fh.name AS head_name, fh.is_optional, fh.is_one_time FROM fee_structures fs
          INNER JOIN fee_heads fh ON fh.id = fs.fee_head_id
          WHERE fs.class_name = ? AND (fs.session_id = ? OR fs.session_id IS NULL)
-         ORDER BY fh.name"
+         ORDER BY fh.name, fs.month"
     );
     $stmt->execute([$className, $sessionId]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getClassFeeAmountMap($pdo, $className, $sessionId = null) {
+    $structure = getClassFeeStructure($pdo, $className, $sessionId);
+    $map = [];
+    foreach ($structure as $row) {
+        $headId = (int) $row['fee_head_id'];
+        $month = (int) ($row['month'] ?? 1);
+        if (!isset($map[$headId])) {
+            $map[$headId] = [];
+        }
+        $map[$headId][$month] = (float) $row['amount'];
+    }
+    return $map;
+}
+
+function saveClassFeeStructure($pdo, $className, array $amounts, $sessionId = null) {
+    $sessionId = $sessionId ?: (getCurrentSession($pdo)['id'] ?? null);
+    $stmt = $pdo->prepare(
+        "INSERT INTO fee_structures (class_name, fee_head_id, amount, month, session_id) VALUES (?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount)"
+    );
+    foreach ($amounts as $headId => $monthAmounts) {
+        if (!is_array($monthAmounts)) {
+            continue;
+        }
+        $headId = (int) $headId;
+        if ($headId <= 0) {
+            continue;
+        }
+        foreach ($monthAmounts as $month => $amt) {
+            $month = (int) $month;
+            if ($month < 1 || $month > 12) {
+                continue;
+            }
+            $stmt->execute([$className, $headId, (float) $amt, $month, $sessionId]);
+        }
+    }
+}
+
+function aggregateFeeStructureByHead(array $structure) {
+    $byHead = [];
+    foreach ($structure as $row) {
+        $headId = (int) $row['fee_head_id'];
+        if (!isset($byHead[$headId])) {
+            $byHead[$headId] = [
+                'fee_head_id' => $headId,
+                'head_name' => $row['head_name'] ?? '',
+                'is_optional' => !empty($row['is_optional']),
+                'is_one_time' => !empty($row['is_one_time']),
+                'amount' => 0.0,
+                'months' => [],
+            ];
+        }
+        $month = (int) ($row['month'] ?? 1);
+        $amt = (float) $row['amount'];
+        $byHead[$headId]['months'][$month] = $amt;
+    }
+    foreach ($byHead as &$head) {
+        if (!empty($head['is_one_time'])) {
+            $head['amount'] = $head['months'] ? max($head['months']) : 0.0;
+        } else {
+            $head['amount'] = array_sum($head['months']);
+        }
+    }
+    unset($head);
+    return array_values($byHead);
+}
+
+function buildMonthlyFeeBreakdown(array $structure) {
+    $labels = getFeeMonthLabels();
+    $monthTotals = [];
+    foreach (getFeeMonthOrder() as $month) {
+        $monthTotals[$month] = 0.0;
+    }
+    foreach ($structure as $row) {
+        $month = (int) ($row['month'] ?? 1);
+        if (isset($monthTotals[$month])) {
+            $monthTotals[$month] += (float) $row['amount'];
+        }
+    }
+    $breakdown = [];
+    foreach (getFeeMonthOrder() as $month) {
+        $breakdown[] = [
+            'month' => $month,
+            'label' => $labels[$month],
+            'total' => $monthTotals[$month],
+        ];
+    }
+    return $breakdown;
 }
 
 function isHostelFeeHeadName($headName) {
@@ -501,26 +1019,51 @@ function studentHasTransportAssignment($pdo, $studentId) {
     return (bool) $stmt->fetchColumn();
 }
 
-function filterFeeStructureForStudent($pdo, $studentId, array $structure) {
-    $hasHostel = studentHasActiveHostel($pdo, $studentId);
-    $hasTransport = studentHasTransportAssignment($pdo, $studentId);
-    return array_values(array_filter($structure, function ($row) use ($hasHostel, $hasTransport) {
-        $headName = $row['head_name'] ?? '';
-        if (!$hasHostel && isHostelFeeHeadName($headName)) {
-            return false;
-        }
-        if (!$hasTransport && isTransportFeeHeadName($headName)) {
-            return false;
-        }
+function feeStructureRowAppliesToStudent($pdo, $studentId, array $row) {
+    if (empty($row['is_optional'])) {
         return true;
+    }
+    $headName = $row['head_name'] ?? '';
+    if (isHostelFeeHeadName($headName)) {
+        return studentHasActiveHostel($pdo, (int) $studentId);
+    }
+    if (isTransportFeeHeadName($headName)) {
+        return studentHasTransportAssignment($pdo, (int) $studentId);
+    }
+    return false;
+}
+
+function filterFeeStructureForStudent($pdo, $studentId, array $structure) {
+    return array_values(array_filter($structure, function ($row) use ($pdo, $studentId) {
+        return feeStructureRowAppliesToStudent($pdo, $studentId, $row);
     }));
 }
 
-function feeHeadAppliesToStudent($pdo, $studentId, $headName) {
-    if (isHostelFeeHeadName($headName) && !studentHasActiveHostel($pdo, $studentId)) {
+function feeHeadAppliesToStudent($pdo, $studentId, $headIdOrName) {
+    if (is_numeric($headIdOrName)) {
+        $head = getFeeHeadById($pdo, (int) $headIdOrName);
+        if (!$head) {
+            return false;
+        }
+        return feeStructureRowAppliesToStudent($pdo, $studentId, [
+            'head_name' => $head['name'],
+            'is_optional' => $head['is_optional'],
+        ]);
+    }
+    $stmt = $pdo->prepare("SELECT * FROM fee_heads WHERE name = ? AND status = 'Active' LIMIT 1");
+    $stmt->execute([(string) $headIdOrName]);
+    $head = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($head) {
+        return feeStructureRowAppliesToStudent($pdo, $studentId, [
+            'head_name' => $head['name'],
+            'is_optional' => $head['is_optional'],
+        ]);
+    }
+    $headName = (string) $headIdOrName;
+    if (isHostelFeeHeadName($headName) && !studentHasActiveHostel($pdo, (int) $studentId)) {
         return false;
     }
-    if (isTransportFeeHeadName($headName) && !studentHasTransportAssignment($pdo, $studentId)) {
+    if (isTransportFeeHeadName($headName) && !studentHasTransportAssignment($pdo, (int) $studentId)) {
         return false;
     }
     return true;
@@ -570,24 +1113,32 @@ function getStudentFeeSummary($pdo, $studentId) {
     $structure = getClassFeeStructure($pdo, $student['class'], $session['id'] ?? null);
     $hasHostel = studentHasActiveHostel($pdo, (int) $studentId);
     $hasTransport = studentHasTransportAssignment($pdo, (int) $studentId);
-    $feeItems = array_values(array_filter($structure, function ($row) use ($hasHostel, $hasTransport) {
-        $headName = $row['head_name'] ?? '';
-        if (!$hasHostel && isHostelFeeHeadName($headName)) {
-            return false;
+    $applicableStructure = filterFeeStructureForStudent($pdo, (int) $studentId, $structure);
+    $feeItems = aggregateFeeStructureByHead($applicableStructure);
+    $totalDue = 0.0;
+    foreach ($feeItems as $item) {
+        $totalDue += (float) $item['amount'];
+    }
+    $monthlyBreakdown = buildMonthlyFeeBreakdown($applicableStructure);
+    $currentMonth = (int) date('n');
+    $currentMonthDue = 0.0;
+    foreach ($applicableStructure as $row) {
+        if ((int) ($row['month'] ?? 0) === $currentMonth) {
+            $currentMonthDue += (float) $row['amount'];
         }
-        if (!$hasTransport && isTransportFeeHeadName($headName)) {
-            return false;
-        }
-        return true;
-    }));
-    $totalDue = 0;
-    foreach ($feeItems as $row) {
-        $totalDue += (float) $row['amount'];
     }
     $paidStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM fee_payments WHERE student_id = ?");
     $paidStmt->execute([(int) $studentId]);
     $totalPaid = (float) $paidStmt->fetchColumn();
-    $payments = $pdo->prepare("SELECT fp.*, fh.name AS head_name FROM fee_payments fp LEFT JOIN fee_heads fh ON fh.id = fp.fee_head_id WHERE fp.student_id = ? ORDER BY fp.payment_date DESC, fp.id DESC");
+    $payments = $pdo->prepare(
+        "SELECT fp.id, fp.student_id, fp.fee_head_id, fp.amount, fp.payment_date,
+                fp.fee_month, fp.payment_method, fp.receipt_no, fp.session_id, fp.remarks, fp.created_at,
+                fh.name AS head_name
+         FROM fee_payments fp
+         LEFT JOIN fee_heads fh ON fh.id = fp.fee_head_id
+         WHERE fp.student_id = ?
+         ORDER BY fp.payment_date DESC, fp.id DESC"
+    );
     $payments->execute([(int) $studentId]);
     $balance = max(0, $totalDue - $totalPaid);
     if ($totalDue <= 0) {
@@ -604,6 +1155,9 @@ function getStudentFeeSummary($pdo, $studentId) {
         'balance' => $balance,
         'fee_status' => $feeStatus,
         'fee_items' => $feeItems,
+        'monthly_breakdown' => $monthlyBreakdown,
+        'current_month' => $currentMonth,
+        'current_month_due' => $currentMonthDue,
         'has_hostel' => $hasHostel,
         'has_transport' => $hasTransport,
         'payments' => $payments->fetchAll(PDO::FETCH_ASSOC),

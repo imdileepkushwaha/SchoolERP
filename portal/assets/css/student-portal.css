@@ -218,6 +218,46 @@
 .sp-badge.due { background: #fef2f2; color: #dc2626; }
 .sp-badge.method { background: #f3e8ff; color: #7c3aed; }
 
+/* Monthly fee schedule (legacy list — kept for compatibility) */
+.sp-month-schedule { display: flex; flex-direction: column; gap: 8px; }
+.sp-month-row {
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    border-bottom: none;
+}
+.sp-month-row.is-paid {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+}
+.sp-month-row.is-partial {
+    background: #fffbeb;
+    border-color: #fde68a;
+}
+.sp-month-row.is-pending {
+    background: #fff;
+    border-color: #e2e8f0;
+}
+.sp-month-row.is-current {
+    box-shadow: inset 0 0 0 1px #fdba74;
+}
+.sp-month-row.is-paid.is-current {
+    box-shadow: inset 0 0 0 1px #34d399;
+}
+.sp-month-current { color: #ea580c !important; font-weight: 700; }
+.sp-month-row.is-paid .sp-month-current { color: #059669 !important; }
+.sp-month-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.sp-month-side > strong { font-size: 0.95rem; color: var(--sp-text); white-space: nowrap; }
+.sp-month-row.is-paid .sp-month-side > strong { color: #047857; }
+
 /* Table */
 .sp-table-wrap { overflow-x: auto; border: 1px solid var(--sp-border); border-radius: 14px; }
 .sp-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
@@ -349,6 +389,266 @@
 .sp-fee-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #7c3aed, #a855f7); transition: width .5s ease; }
 .sp-fee-note { margin: 12px 0 0; font-size: 0.82rem; color: var(--sp-muted); display: flex; align-items: center; gap: 7px; }
 .sp-fee-note i { color: var(--sp-primary); }
+
+/* Fee overview — full width */
+.sp-fee-overview {
+    background: var(--sp-card);
+    border: 1px solid var(--sp-border);
+    border-radius: 20px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 24px rgba(124, 58, 237, 0.06);
+}
+.sp-fee-overview-hero {
+    padding: 22px 24px 20px;
+    background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 52%, #7c3aed 100%);
+    color: #fff;
+}
+.sp-fee-overview-hero-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.sp-fee-overview-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(255, 255, 255, 0.75);
+    margin-bottom: 6px;
+}
+.sp-fee-overview-title h2 {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #fff;
+}
+.sp-fee-overview-title p {
+    margin: 6px 0 0;
+    font-size: 0.84rem;
+    color: rgba(255, 255, 255, 0.82);
+    max-width: 520px;
+    line-height: 1.5;
+}
+.sp-fee-overview-ring {
+    --pct: 0;
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    background: conic-gradient(#a7f3d0 calc(var(--pct) * 1%), rgba(255, 255, 255, 0.15) 0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12);
+}
+.sp-fee-overview-ring-inner {
+    width: 68px;
+    height: 68px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(4px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+}
+.sp-fee-overview-ring-inner strong { font-size: 1.15rem; font-weight: 800; color: #fff; }
+.sp-fee-overview-ring-inner span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.75); font-weight: 700; margin-top: 2px; }
+.sp-fee-overview-track {
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    overflow: hidden;
+    margin: 18px 0 16px;
+}
+.sp-fee-overview-track-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #6ee7b7, #34d399);
+    transition: width 0.5s ease;
+}
+.sp-fee-overview-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+}
+.sp-fee-overview-metric {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.sp-fee-overview-metric span {
+    display: block;
+    font-size: 0.64rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.65);
+    font-weight: 700;
+    margin-bottom: 3px;
+}
+.sp-fee-overview-metric strong { font-size: 0.95rem; font-weight: 800; color: #fff; }
+.sp-fee-overview-metric.is-green strong { color: #bbf7d0; }
+.sp-fee-overview-metric.is-red strong { color: #fecaca; }
+
+.sp-fee-overview-body {
+    display: grid;
+    grid-template-columns: minmax(240px, 320px) 1fr;
+    gap: 0;
+    border-top: 1px solid var(--sp-border);
+}
+.sp-fee-overview-panel {
+    padding: 20px 22px;
+    border-right: 1px solid var(--sp-border);
+}
+.sp-fee-overview-panel-wide { border-right: none; }
+.sp-fee-overview-panel.is-full { grid-column: 1 / -1; border-right: none; }
+.sp-fee-overview-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.sp-fee-overview-panel-head h3 {
+    margin: 0;
+    font-size: 0.92rem;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--sp-text);
+}
+.sp-fee-overview-panel-head h3 i { color: var(--sp-primary); }
+.sp-fee-overview-panel-head > span {
+    font-size: 0.72rem;
+    color: var(--sp-muted);
+    font-weight: 600;
+    background: #f8fafc;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--sp-border);
+}
+.sp-fee-head-grid { display: flex; flex-direction: column; gap: 8px; }
+.sp-fee-head-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    background: #fafafa;
+    transition: border-color 0.15s, background 0.15s;
+}
+.sp-fee-head-chip:hover { border-color: #ddd6fe; background: #faf5ff; }
+.sp-fee-head-chip-ico {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: #f3e8ff;
+    color: var(--sp-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.82rem;
+    flex-shrink: 0;
+}
+.sp-fee-head-chip-body { flex: 1; min-width: 0; }
+.sp-fee-head-chip-body strong {
+    display: block;
+    font-size: 0.84rem;
+    color: var(--sp-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sp-fee-head-chip-body span { font-size: 0.82rem; font-weight: 800; color: var(--sp-primary); }
+
+.sp-fee-month-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+.sp-fee-month-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.sp-fee-month-legend .is-paid { color: #059669; }
+.sp-fee-month-legend .is-partial { color: #d97706; }
+.sp-fee-month-legend .is-pending { color: #64748b; }
+.sp-fee-month-legend i { font-size: 0.45rem; }
+
+.sp-month-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+    gap: 10px;
+}
+.sp-month-card {
+    position: relative;
+    padding: 12px 12px 10px;
+    border-radius: 14px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    min-height: 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.sp-month-card:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06); }
+.sp-month-card.is-paid { background: #ecfdf5; border-color: #a7f3d0; }
+.sp-month-card.is-partial { background: #fffbeb; border-color: #fde68a; }
+.sp-month-card.is-pending { background: #fff; border-color: #e2e8f0; }
+.sp-month-card.is-current { box-shadow: inset 0 0 0 2px #fdba74; }
+.sp-month-card.is-paid.is-current { box-shadow: inset 0 0 0 2px #34d399; }
+.sp-month-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+}
+.sp-month-card-top strong { font-size: 0.88rem; color: var(--sp-text); }
+.sp-month-card-top .sp-badge { font-size: 0.62rem; padding: 2px 7px; flex-shrink: 0; }
+.sp-month-card-amt { font-size: 1rem; font-weight: 800; color: var(--sp-text); line-height: 1.2; }
+.sp-month-card.is-paid .sp-month-card-amt { color: #047857; }
+.sp-month-card small { font-size: 0.68rem; color: var(--sp-muted); font-weight: 600; margin-top: auto; }
+.sp-month-card.is-paid small { color: #059669; }
+.sp-month-card-tag {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-style: normal;
+    font-size: 0.55rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #ea580c;
+    background: #fff7ed;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid #fed7aa;
+}
+.sp-month-card.is-paid .sp-month-card-tag { color: #059669; background: #ecfdf5; border-color: #a7f3d0; }
+
+.sp-fee-history-card { margin-bottom: 0; }
+
+@media (max-width: 900px) {
+    .sp-fee-overview-body { grid-template-columns: 1fr; }
+    .sp-fee-overview-panel { border-right: none; border-bottom: 1px solid var(--sp-border); }
+    .sp-fee-overview-panel-wide { border-bottom: none; }
+}
+@media (max-width: 560px) {
+    .sp-fee-overview-hero { padding: 18px 16px; }
+    .sp-fee-overview-panel { padding: 16px; }
+    .sp-month-grid { grid-template-columns: repeat(2, 1fr); }
+}
 .sp-receipt-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 9px; background: #f3e8ff; color: var(--sp-primary); font-size: 0.76rem; font-weight: 700; text-decoration: none; border: 1px solid #ddd6fe; transition: all .15s; white-space: nowrap; }
 .sp-receipt-btn:hover { background: var(--sp-primary); color: #fff; border-color: var(--sp-primary); transform: translateY(-1px); }
 
