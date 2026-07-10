@@ -3,11 +3,12 @@ $page_title = "Settings";
 require_once 'includes/init.php';
 require_once '../includes/db_connect.php';
 require_once 'includes/settings_helpers.php';
+require_once 'includes/db_settings_helpers.php';
 
 ensureSettingsSchema($pdo);
 
 $activeTab = $_GET['tab'] ?? 'school';
-$allowedTabs = ['school', 'signatures', 'email', 'sms', 'whatsapp', 'password'];
+$allowedTabs = ['school', 'signatures', 'email', 'sms', 'whatsapp', 'database', 'password'];
 if (!in_array($activeTab, $allowedTabs, true)) {
     $activeTab = 'school';
 }
@@ -33,6 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
         $current = getSchoolProfile($pdo);
         $profile['logo'] = $current['logo'];
+        $profile['logo_light'] = $current['logo_light'];
+        $profile['logo_icon'] = $current['logo_icon'];
         $profile['favicon'] = $current['favicon'];
 
         if (!empty($_POST['remove_logo'])) {
@@ -48,6 +51,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($uploaded) {
                 deleteSchoolBrandingFile($current['logo']);
                 $profile['logo'] = $uploaded;
+            }
+        }
+
+        if (!empty($_POST['remove_logo_light'])) {
+            deleteSchoolBrandingFile($profile['logo_light']);
+            $profile['logo_light'] = '';
+        } elseif (!empty($_FILES['school_logo_light']['name'])) {
+            $uploaded = uploadSchoolBrandingFile($_FILES['school_logo_light'], 'logo_light');
+            if ($uploaded === false) {
+                $_SESSION['error_msg'] = 'Light logo upload failed. Use JPG, PNG, WEBP or GIF (max 2MB).';
+                header('Location: settings.php?tab=school');
+                exit;
+            }
+            if ($uploaded) {
+                deleteSchoolBrandingFile($current['logo_light']);
+                $profile['logo_light'] = $uploaded;
+            }
+        }
+
+        if (!empty($_POST['remove_logo_icon'])) {
+            deleteSchoolBrandingFile($profile['logo_icon']);
+            $profile['logo_icon'] = '';
+        } elseif (!empty($_FILES['school_logo_icon']['name'])) {
+            $uploaded = uploadSchoolBrandingFile($_FILES['school_logo_icon'], 'logo_icon');
+            if ($uploaded === false) {
+                $_SESSION['error_msg'] = 'Logo icon upload failed. Use ICO, PNG or JPG (max 512KB).';
+                header('Location: settings.php?tab=school');
+                exit;
+            }
+            if ($uploaded) {
+                deleteSchoolBrandingFile($current['logo_icon']);
+                $profile['logo_icon'] = $uploaded;
             }
         }
 
@@ -252,6 +287,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: settings.php?tab=password');
         exit;
     }
+
+    if ($action === 'save_database') {
+        $config = buildDatabaseSettingsFromPost($_POST);
+        if (!saveDbProfilesConfig($config)) {
+            $_SESSION['error_msg'] = 'Could not save database settings. Check write permission on the includes/ folder.';
+        } else {
+            $_SESSION['success_msg'] = 'Database settings saved. Refresh the page to apply the new connection.';
+        }
+        header('Location: settings.php?tab=database');
+        exit;
+    }
+
+    if ($action === 'test_db_online' || $action === 'test_db_offline') {
+        $profileKey = $action === 'test_db_online' ? 'online' : 'offline';
+        $profile = databaseProfileFromPost($_POST, $profileKey);
+        $test = testDbProfile($profile);
+        if ($test['ok']) {
+            $_SESSION['success_msg'] = ucfirst($profileKey) . ' database connected successfully (' . $test['latency_ms'] . ' ms).';
+        } else {
+            $_SESSION['error_msg'] = ucfirst($profileKey) . ' connection failed: ' . $test['error'];
+        }
+        header('Location: settings.php?tab=database');
+        exit;
+    }
 }
 
 require_once 'includes/header.php';
@@ -260,7 +319,12 @@ $sms = getSmsSettings($pdo);
 $whatsapp = getWhatsAppSettings($pdo);
 $school = getSchoolProfile($pdo);
 $logoPreviewUrl = schoolBrandingUrl($school['logo'] ?? '', 'admin');
+$logoLightPreviewUrl = schoolBrandingUrl($school['logo_light'] ?? '', 'admin');
+$logoIconPreviewUrl = schoolBrandingUrl($school['logo_icon'] ?? '', 'admin');
 $faviconPreviewUrl = schoolBrandingUrl($school['favicon'] ?? '', 'admin');
+$dbSettings = getDatabaseSettingsForm();
+$dbActiveProfile = $db_active_profile ?? 'offline';
+$dbConnectionMode = $db_connection_mode ?? 'offline';
 $signatures = getAuthoritySignatures($pdo);
 $editSig = null;
 if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
@@ -303,6 +367,10 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
             <span class="settings-vtab-icon"><i class="fab fa-whatsapp"></i></span>
             <span class="settings-vtab-text"><strong>WhatsApp</strong><small>Business API setup</small></span>
         </a>
+        <a href="settings.php?tab=database" class="settings-vtab <?php echo $activeTab === 'database' ? 'active' : ''; ?>">
+            <span class="settings-vtab-icon"><i class="fas fa-database"></i></span>
+            <span class="settings-vtab-text"><strong>Database</strong><small>Online &amp; offline flow</small></span>
+        </a>
         <a href="settings.php?tab=password" class="settings-vtab <?php echo $activeTab === 'password' ? 'active' : ''; ?>">
             <span class="settings-vtab-icon"><i class="fas fa-lock"></i></span>
             <span class="settings-vtab-text"><strong>Change Password</strong><small>Admin account security</small></span>
@@ -320,7 +388,7 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
                 <input type="hidden" name="action" value="save_school">
                 <div class="settings-branding-block">
                     <h4><i class="fas fa-palette"></i> Logo &amp; Favicon</h4>
-                    <p>Shown in admin sidebar, login pages, certificates, ID cards and browser tab.</p>
+                    <p>Shown on the public website, admin sidebar, login pages, certificates, ID cards and browser tab.</p>
                     <div class="settings-branding-grid">
                         <div class="settings-brand-card">
                             <label>School Logo</label>
@@ -332,9 +400,39 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
                                 <?php endif; ?>
                             </div>
                             <input type="file" name="school_logo" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif">
-                            <span class="field-hint">PNG or JPG, max 2MB. Square or wide logo works best.</span>
+                            <span class="field-hint">Main logo for light backgrounds. PNG or JPG, max 2MB.</span>
                             <?php if ($logoPreviewUrl): ?>
                             <label class="settings-remove-check"><input type="checkbox" name="remove_logo" value="1"> Remove current logo</label>
+                            <?php endif; ?>
+                        </div>
+                        <div class="settings-brand-card">
+                            <label>Light Logo</label>
+                            <div class="settings-brand-preview is-dark-bg<?php echo $logoLightPreviewUrl ? ' has-image' : ''; ?>">
+                                <?php if ($logoLightPreviewUrl): ?>
+                                <img src="<?php echo htmlspecialchars($logoLightPreviewUrl); ?>" alt="Light logo">
+                                <?php else: ?>
+                                <span class="settings-brand-placeholder is-light"><i class="fas fa-image"></i> No light logo</span>
+                                <?php endif; ?>
+                            </div>
+                            <input type="file" name="school_logo_light" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif">
+                            <span class="field-hint">White or light version for dark headers, hero and footer. Max 2MB.</span>
+                            <?php if ($logoLightPreviewUrl): ?>
+                            <label class="settings-remove-check"><input type="checkbox" name="remove_logo_light" value="1"> Remove light logo</label>
+                            <?php endif; ?>
+                        </div>
+                        <div class="settings-brand-card">
+                            <label>Logo Icon</label>
+                            <div class="settings-brand-preview is-icon<?php echo $logoIconPreviewUrl ? ' has-image' : ''; ?>">
+                                <?php if ($logoIconPreviewUrl): ?>
+                                <img src="<?php echo htmlspecialchars($logoIconPreviewUrl); ?>" alt="Logo icon">
+                                <?php else: ?>
+                                <span class="settings-brand-placeholder"><i class="fas fa-shapes"></i> No icon</span>
+                                <?php endif; ?>
+                            </div>
+                            <input type="file" name="school_logo_icon" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon,.ico">
+                            <span class="field-hint">Compact mark for navbar and mobile menu. Square, max 512KB.</span>
+                            <?php if ($logoIconPreviewUrl): ?>
+                            <label class="settings-remove-check"><input type="checkbox" name="remove_logo_icon" value="1"> Remove logo icon</label>
                             <?php endif; ?>
                         </div>
                         <div class="settings-brand-card">
@@ -560,6 +658,119 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
                 </form>
             </div>
         </div>
+        <?php endif; ?>
+
+        <?php if ($activeTab === 'database'): ?>
+        <div class="settings-panel active">
+            <div class="settings-panel-head">
+                <h3>Online &amp; Offline Database</h3>
+                <p>Configure cloud (online) and local XAMPP (offline) databases. Use <strong>Auto</strong> to connect online when internet is available and fall back to local when offline.</p>
+            </div>
+
+            <div class="db-flow-status">
+                <div class="db-flow-status-card <?php echo $dbActiveProfile === 'online' ? 'is-online' : 'is-offline'; ?>">
+                    <span class="db-flow-status-icon"><i class="fas fa-circle"></i></span>
+                    <div>
+                        <small>Currently connected</small>
+                        <strong><?php echo $dbActiveProfile === 'online' ? 'Online Database' : 'Offline Database'; ?></strong>
+                        <em>Mode: <?php echo htmlspecialchars(ucfirst($dbConnectionMode)); ?></em>
+                    </div>
+                </div>
+            </div>
+
+            <div class="db-flow-steps">
+                <div class="db-flow-step">
+                    <span class="db-flow-num">1</span>
+                    <div><strong>Online DB</strong><p>Hosting / cloud MySQL — shared when internet works</p></div>
+                </div>
+                <div class="db-flow-arrow"><i class="fas fa-arrows-left-right"></i></div>
+                <div class="db-flow-step is-auto">
+                    <span class="db-flow-num">2</span>
+                    <div><strong>Auto Mode</strong><p>Tries online first, switches to local offline DB</p></div>
+                </div>
+                <div class="db-flow-arrow"><i class="fas fa-arrow-right"></i></div>
+                <div class="db-flow-step">
+                    <span class="db-flow-num">3</span>
+                    <div><strong>Offline DB</strong><p>Local XAMPP MySQL — works without internet</p></div>
+                </div>
+            </div>
+
+            <form method="POST" class="settings-form" id="dbSettingsForm">
+                <input type="hidden" name="action" value="save_database">
+
+                <div class="db-mode-picker">
+                    <label class="db-mode-option<?php echo $dbSettings['mode'] === 'auto' ? ' active' : ''; ?>">
+                        <input type="radio" name="db_mode" value="auto" <?php echo $dbSettings['mode'] === 'auto' ? 'checked' : ''; ?>>
+                        <strong>Auto (Recommended)</strong>
+                        <span>Online when available → offline fallback</span>
+                    </label>
+                    <label class="db-mode-option<?php echo $dbSettings['mode'] === 'online' ? ' active' : ''; ?>">
+                        <input type="radio" name="db_mode" value="online" <?php echo $dbSettings['mode'] === 'online' ? 'checked' : ''; ?>>
+                        <strong>Online Only</strong>
+                        <span>Always use cloud server</span>
+                    </label>
+                    <label class="db-mode-option<?php echo $dbSettings['mode'] === 'offline' ? ' active' : ''; ?>">
+                        <input type="radio" name="db_mode" value="offline" <?php echo $dbSettings['mode'] === 'offline' ? 'checked' : ''; ?>>
+                        <strong>Offline Only</strong>
+                        <span>Always use local XAMPP</span>
+                    </label>
+                </div>
+
+                <div class="db-profile-grid">
+                    <div class="db-profile-card">
+                        <div class="db-profile-head is-online">
+                            <h4><i class="fas fa-cloud"></i> Online Database</h4>
+                            <p>Remote hosting / VPS / cloud MySQL</p>
+                        </div>
+                        <div class="form-grid form-grid-2">
+                            <div class="form-field form-field-full"><label>Label</label><input type="text" name="db_online_label" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['label']); ?>"></div>
+                            <div class="form-field"><label>Host</label><input type="text" name="db_online_host" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['host']); ?>" placeholder="db.yourhost.com"></div>
+                            <div class="form-field"><label>Port</label><input type="number" name="db_online_port" class="form-input" value="<?php echo (int) $dbSettings['online']['port']; ?>"></div>
+                            <div class="form-field"><label>Database Name</label><input type="text" name="db_online_dbname" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['dbname']); ?>"></div>
+                            <div class="form-field"><label>Username</label><input type="text" name="db_online_username" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['username']); ?>"></div>
+                            <div class="form-field form-field-full"><label>Password</label><input type="password" name="db_online_password" class="form-input" placeholder="<?php echo $dbSettings['online']['password'] !== '' ? '••••••••' : 'Database password'; ?>" autocomplete="new-password"></div>
+                        </div>
+                        <button type="submit" formaction="settings.php?tab=database" formmethod="POST" name="action" value="test_db_online" class="btn-header-action btn-header-outline"><i class="fas fa-plug"></i> Test Online Connection</button>
+                    </div>
+
+                    <div class="db-profile-card">
+                        <div class="db-profile-head is-offline">
+                            <h4><i class="fas fa-server"></i> Offline Database</h4>
+                            <p>Local XAMPP / WAMP on this computer</p>
+                        </div>
+                        <div class="form-grid form-grid-2">
+                            <div class="form-field form-field-full"><label>Label</label><input type="text" name="db_offline_label" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['label']); ?>"></div>
+                            <div class="form-field"><label>Host</label><input type="text" name="db_offline_host" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['host']); ?>" placeholder="localhost"></div>
+                            <div class="form-field"><label>Port</label><input type="number" name="db_offline_port" class="form-input" value="<?php echo (int) $dbSettings['offline']['port']; ?>"></div>
+                            <div class="form-field"><label>Database Name</label><input type="text" name="db_offline_dbname" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['dbname']); ?>"></div>
+                            <div class="form-field"><label>Username</label><input type="text" name="db_offline_username" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['username']); ?>"></div>
+                            <div class="form-field form-field-full"><label>Password</label><input type="password" name="db_offline_password" class="form-input" placeholder="<?php echo $dbSettings['offline']['password'] !== '' ? '••••••••' : 'Usually empty on XAMPP'; ?>" autocomplete="new-password"></div>
+                        </div>
+                        <button type="submit" formaction="settings.php?tab=database" formmethod="POST" name="action" value="test_db_offline" class="btn-header-action btn-header-outline"><i class="fas fa-plug"></i> Test Offline Connection</button>
+                    </div>
+                </div>
+
+                <div class="settings-info-box">
+                    <i class="fas fa-info-circle"></i>
+                    <div>
+                        <strong>How it works</strong><br>
+                        Settings are saved in <code>includes/db_profiles.local.php</code>. In <strong>Auto</strong> mode: on your <strong>local PC (XAMPP)</strong> the offline database is used; on the <strong>live server</strong> the online database is used. If the preferred connection fails, it falls back to the other profile.
+                    </div>
+                </div>
+
+                <div class="settings-form-actions">
+                    <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save Database Settings</button>
+                </div>
+            </form>
+        </div>
+        <script>
+        document.querySelectorAll('.db-mode-option input').forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                document.querySelectorAll('.db-mode-option').forEach(function (el) { el.classList.remove('active'); });
+                radio.closest('.db-mode-option').classList.add('active');
+            });
+        });
+        </script>
         <?php endif; ?>
 
         <?php if ($activeTab === 'password'): ?>

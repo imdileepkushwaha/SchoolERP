@@ -1595,6 +1595,16 @@ function getDashboardStats($pdo) {
     );
 }
 
+function getWebsiteEnquiries($pdo, $limit = 10) {
+    ensureErpSchema($pdo);
+    $stmt = $pdo->prepare(
+        "SELECT * FROM admission_enquiries WHERE class_sought = 'Website Contact' ORDER BY created_at DESC LIMIT ?"
+    );
+    $stmt->bindValue(1, (int) $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 function getHostelRoomOccupancy($pdo, $roomId) {
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM hostel_allotments WHERE room_id = ? AND status = 'Active'");
     $stmt->execute([(int) $roomId]);

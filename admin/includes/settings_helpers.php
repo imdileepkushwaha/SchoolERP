@@ -214,6 +214,8 @@ function getSchoolProfile($pdo) {
         'principal'  => getSetting($pdo, 'school_principal', ''),
         'affiliation'=> getSetting($pdo, 'school_affiliation', 'CBSE'),
         'logo'       => getSetting($pdo, 'school_logo', ''),
+        'logo_light' => getSetting($pdo, 'school_logo_light', ''),
+        'logo_icon'  => getSetting($pdo, 'school_logo_icon', ''),
         'favicon'    => getSetting($pdo, 'school_favicon', ''),
     ];
 }
@@ -232,6 +234,14 @@ function schoolBrandingUrl($relativePath, $context = 'admin') {
     return $path;
 }
 
+function schoolSidebarLogoUrl(array $school, $context = 'admin') {
+    $icon = trim($school['logo_icon'] ?? '');
+    if ($icon !== '') {
+        return schoolBrandingUrl($icon, $context);
+    }
+    return schoolBrandingUrl($school['logo'] ?? '', $context);
+}
+
 function uploadSchoolBrandingFile(array $file, $type = 'logo') {
     if (empty($file['name']) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         return null;
@@ -243,7 +253,8 @@ function uploadSchoolBrandingFile(array $file, $type = 'logo') {
     if (!in_array($mime, $allowed, true)) {
         return false;
     }
-    $maxSize = ($type === 'favicon') ? 512 * 1024 : 2 * 1024 * 1024;
+    $smallTypes = ['favicon', 'logo_icon'];
+    $maxSize = in_array($type, $smallTypes, true) ? 512 * 1024 : 2 * 1024 * 1024;
     if (($file['size'] ?? 0) > $maxSize) {
         return false;
     }
@@ -260,7 +271,13 @@ function uploadSchoolBrandingFile(array $file, $type = 'logo') {
         'image/vnd.microsoft.icon' => 'ico',
     ];
     $ext = $extMap[$mime] ?? 'png';
-    $prefix = $type === 'favicon' ? 'favicon' : 'logo';
+    $prefixMap = [
+        'favicon' => 'favicon',
+        'logo_light' => 'logo_light',
+        'logo_icon' => 'logo_icon',
+        'logo' => 'logo',
+    ];
+    $prefix = $prefixMap[$type] ?? 'logo';
     $filename = $prefix . '_' . time() . '.' . $ext;
     if (move_uploaded_file($file['tmp_name'], $dir . $filename)) {
         return 'uploads/branding/' . $filename;
@@ -291,6 +308,12 @@ function saveSchoolProfile($pdo, array $data) {
     ]);
     if (array_key_exists('logo', $data)) {
         setSetting($pdo, 'school_logo', $data['logo'] ?? '');
+    }
+    if (array_key_exists('logo_light', $data)) {
+        setSetting($pdo, 'school_logo_light', $data['logo_light'] ?? '');
+    }
+    if (array_key_exists('logo_icon', $data)) {
+        setSetting($pdo, 'school_logo_icon', $data['logo_icon'] ?? '');
     }
     if (array_key_exists('favicon', $data)) {
         setSetting($pdo, 'school_favicon', $data['favicon'] ?? '');

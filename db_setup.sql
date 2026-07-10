@@ -34,9 +34,10 @@ CREATE TABLE `admin_users` (
 --
 -- Dumping data for table `admin_users`
 --
--- Default Admin Password is 'admin123'
+-- Prefer: Admin Login → Run Database Setup (creates admin / admin123).
+-- If you import this file manually, old hash below uses password: password
 INSERT INTO `admin_users` (`username`, `password`) VALUES
-('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'); 
+('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi');
 
 
 -- --------------------------------------------------------

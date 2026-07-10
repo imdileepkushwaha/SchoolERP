@@ -19,6 +19,8 @@ $pendingLeaves = $pdo->query(
 $topTeachers = $pdo->query(
     "SELECT name, subject, employee_id FROM teachers WHERE status='Active' ORDER BY name LIMIT 5"
 )->fetchAll(PDO::FETCH_ASSOC);
+$websiteEnquiries = getWebsiteEnquiries($pdo, 12);
+$websiteEnquiriesNew = count(array_filter($websiteEnquiries, fn($e) => ($e['status'] ?? '') === 'New'));
 
 require_once 'includes/header.php';
 
@@ -293,6 +295,59 @@ $todayLabel = date('l, d M Y');
             </div>
         </div>
     </div>
+</div>
+
+<div class="form-section-card db-panel db-website-enquiries">
+    <div class="db-card-head compact">
+        <div class="db-card-head-icon is-orange"><i class="fas fa-globe"></i></div>
+        <div>
+            <h4>Website Enquiries</h4>
+            <p>Contact form submissions from the public homepage<?php if ($websiteEnquiriesNew): ?> · <strong><?php echo $websiteEnquiriesNew; ?> new</strong><?php endif; ?></p>
+        </div>
+        <a href="admission_enquiries.php" class="db-card-link">Manage all <i class="fas fa-arrow-right"></i></a>
+    </div>
+    <?php if ($websiteEnquiries): ?>
+    <div class="table-wrapper">
+        <table class="db-table db-enquiry-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Name</th>
+                    <th>Mobile</th>
+                    <th>Email</th>
+                    <th>Message</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($websiteEnquiries as $eq):
+                $status = $eq['status'] ?? 'New';
+                $statusClass = $status === 'New' ? 'is-new' : ($status === 'Converted' ? 'is-converted' : ($status === 'Contacted' ? 'is-contacted' : 'is-closed'));
+            ?>
+            <tr>
+                <td class="db-enquiry-date">
+                    <strong><?php echo date('d M Y', strtotime($eq['created_at'])); ?></strong>
+                    <small><?php echo date('h:i A', strtotime($eq['created_at'])); ?></small>
+                </td>
+                <td><strong><?php echo htmlspecialchars($eq['student_name']); ?></strong></td>
+                <td><a href="tel:<?php echo htmlspecialchars(preg_replace('/\s+/', '', $eq['mobile'])); ?>" class="db-enquiry-phone"><?php echo htmlspecialchars($eq['mobile']); ?></a></td>
+                <td><?php if (!empty($eq['email'])): ?><a href="mailto:<?php echo htmlspecialchars($eq['email']); ?>"><?php echo htmlspecialchars($eq['email']); ?></a><?php else: ?>—<?php endif; ?></td>
+                <td class="db-enquiry-msg"><?php
+                    $enqMsg = trim($eq['message'] ?? '');
+                    echo $enqMsg !== '' ? htmlspecialchars(mb_strimwidth($enqMsg, 0, 120, '…')) : '—';
+                ?></td>
+                <td><span class="db-enquiry-status <?php echo $statusClass; ?>"><?php echo htmlspecialchars($status); ?></span></td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php else: ?>
+    <div class="db-empty">
+        <i class="fas fa-inbox"></i>
+        <p>No website enquiries yet. Submissions from <a href="../index.php" target="_blank" rel="noopener">homepage contact form</a> will appear here.</p>
+    </div>
+    <?php endif; ?>
 </div>
 
 <script>

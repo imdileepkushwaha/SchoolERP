@@ -8,7 +8,7 @@ $page_title = $page_title ?? 'Dashboard';
 $admin_name = htmlspecialchars(ucfirst($_SESSION['admin_username']));
 $avatar_url = 'https://ui-avatars.com/api/?name=' . urlencode($_SESSION['admin_username']) . '&background=059669&color=fff&bold=true';
 $schoolBrand = getSchoolProfile($pdo);
-$brandLogoUrl = schoolBrandingUrl($schoolBrand['logo'] ?? '', 'admin');
+$brandLogoUrl = schoolSidebarLogoUrl($schoolBrand, 'admin');
 $brandFaviconUrl = schoolBrandingUrl($schoolBrand['favicon'] ?? '', 'admin');
 $brandTitle = $schoolBrand['name'] ?: 'EduDash';
 ?>
@@ -51,6 +51,14 @@ $brandTitle = $schoolBrand['name'] ?: 'EduDash';
             </div>
 
             <div class="header-actions">
+                <?php
+                $dbBadgeOnline = ($db_active_profile ?? 'offline') === 'online';
+                $dbBadgeMode = ucfirst($db_connection_mode ?? 'offline');
+                ?>
+                <a href="settings.php?tab=database" class="db-header-badge <?php echo $dbBadgeOnline ? 'is-online' : 'is-offline'; ?>" title="Database: <?php echo $dbBadgeOnline ? 'Online' : 'Offline'; ?> · Mode <?php echo htmlspecialchars($dbBadgeMode); ?>">
+                    <i class="fas fa-database"></i>
+                    <span><?php echo $dbBadgeOnline ? 'Online' : 'Offline'; ?></span>
+                </a>
                 <button type="button" class="header-icon-btn" aria-label="Notifications">
                     <i class="far fa-bell"></i>
                     <span class="notification-dot"></span>

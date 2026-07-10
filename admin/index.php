@@ -1,7 +1,14 @@
 <?php
 // admin/index.php (Login Page)
 session_start();
-require_once '../includes/db_connect.php';
+require_once '../includes/db_connection.php';
+
+$dbConnection = connectDatabase(['soft_fail' => true]);
+$pdo = $dbConnection['pdo'] ?? null;
+$db_active_profile = $dbConnection['profile'] ?? '';
+$db_connection_mode = $dbConnection['mode'] ?? 'auto';
+$db_connection_error = $dbConnection['error'] ?? '';
+$db_environment = $dbConnection['environment'] ?? (isLocalEnvironment() ? 'local' : 'server');
 
 if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
     header('Location: dashboard.php');
@@ -9,15 +16,43 @@ if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true
 }
 
 $error = '';
+$setupMessage = '';
 $old_username = '';
+$dbInstalled = false;
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $username = trim($_POST['username']);
-    $password = trim($_POST['password']);
+require_once 'includes/db_install_helpers.php';
+
+if ($pdo) {
+    $dbInstalled = isDatabaseInstalled($pdo);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'db_setup') {
+    $setupResult = runDatabaseSetup();
+    if (!empty($setupResult['ok'])) {
+        $setupMessage = $setupResult['message'] ?? 'Database setup complete.';
+        if (empty($setupResult['already_installed']) && !empty($setupResult['default_login'])) {
+            $setupMessage .= ' Default login: admin / admin123';
+        }
+        $dbConnection = connectDatabase(['soft_fail' => true]);
+        $pdo = $dbConnection['pdo'] ?? null;
+        $db_active_profile = $dbConnection['profile'] ?? '';
+        if ($pdo) {
+            $dbInstalled = isDatabaseInstalled($pdo);
+        }
+    } else {
+        $error = $setupResult['error'] ?? 'Database setup failed.';
+    }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = trim($_POST['username'] ?? '');
+    $password = trim($_POST['password'] ?? '');
     $old_username = $username;
 
-    if (empty($username) || empty($password)) {
+    if (!$pdo) {
+        $error = 'Database is not connected. Use Setup Database first.';
+    } elseif (empty($username) || empty($password)) {
         $error = 'Please enter both username and password.';
+    } elseif (!$dbInstalled) {
+        $error = 'Database tables are not installed yet. Click Setup Database first.';
     } else {
         try {
             $stmt = $pdo->prepare('SELECT id, username, password FROM admin_users WHERE username = :username');
@@ -30,22 +65,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $_SESSION['admin_username'] = $user['username'];
                 header('Location: dashboard.php');
                 exit;
-            } else {
-                $error = 'Invalid username or password.';
             }
+
+            $error = 'Invalid username or password.';
         } catch (PDOException $e) {
-            $error = 'Database error. Please check MySQL is running.';
+            $error = 'Database error. Please run Setup Database or check MySQL.';
         }
     }
 }
 
-require_once '../includes/db_connect.php';
-require_once 'includes/settings_helpers.php';
-ensureSettingsSchema($pdo);
-$loginSchool = getSchoolProfile($pdo);
-$loginLogoUrl = schoolBrandingUrl($loginSchool['logo'] ?? '', 'admin');
-$loginFaviconUrl = schoolBrandingUrl($loginSchool['favicon'] ?? '', 'admin');
-$loginSchoolName = $loginSchool['name'] ?: 'EduDash';
+$loginSchool = ['name' => 'EduDash', 'logo' => '', 'favicon' => ''];
+$loginLogoUrl = '';
+$loginFaviconUrl = '';
+$loginSchoolName = 'EduDash';
+
+if ($pdo) {
+    require_once 'includes/settings_helpers.php';
+    try {
+        ensureSettingsSchema($pdo);
+        $loginSchool = getSchoolProfile($pdo);
+        $loginLogoUrl = schoolBrandingUrl($loginSchool['logo'] ?? '', 'admin');
+        $loginFaviconUrl = schoolBrandingUrl($loginSchool['favicon'] ?? '', 'admin');
+        $loginSchoolName = $loginSchool['name'] ?: 'EduDash';
+    } catch (Throwable $e) {
+    }
+}
+
+$dbStatusLabel = $pdo
+    ? (($db_active_profile === 'online' ? 'Online' : 'Offline') . ' DB')
+    : 'Not Connected';
+$dbSetupTarget = getSetupProfileKey() === 'online' ? 'Online (Server)' : 'Local (XAMPP)';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -99,8 +148,8 @@ $loginSchoolName = $loginSchool['name'] ?: 'EduDash';
                             <div><strong>Staff &amp; Teachers</strong><span>Profiles &amp; timetable</span></div>
                         </div>
                         <div class="login-feature-card">
-                            <div class="login-feature-icon"><i class="fas fa-shield-halved"></i></div>
-                            <div><strong>Secure Access</strong><span>Role-based control</span></div>
+                            <div class="login-feature-icon"><i class="fas fa-database"></i></div>
+                            <div><strong>Smart DB</strong><span>Local &amp; server auto-switch</span></div>
                         </div>
                     </div>
                 </div>
@@ -117,10 +166,33 @@ $loginSchoolName = $loginSchool['name'] ?: 'EduDash';
                         <p>Sign in to manage your school</p>
                     </div>
 
+                    <p class="login-meta-line login-meta-line--<?php echo $pdo ? ($db_active_profile === 'online' ? 'online' : 'offline') : 'error'; ?>">
+                        <i class="fas fa-circle"></i>
+                        <?php echo htmlspecialchars($dbStatusLabel); ?>
+                        <span class="login-meta-sep">·</span>
+                        <?php echo $db_environment === 'local' ? 'Local (XAMPP)' : 'Live Server'; ?>
+                        <span class="login-meta-sep">·</span>
+                        Mode <?php echo htmlspecialchars(strtoupper($db_connection_mode)); ?>
+                    </p>
+
+                    <?php if (!empty($setupMessage)): ?>
+                    <div class="alert alert-success login-alert" id="setupSuccessAlert">
+                        <i class="fas fa-check-circle"></i>
+                        <span><?php echo htmlspecialchars($setupMessage); ?></span>
+                    </div>
+                    <?php endif; ?>
+
                     <?php if (!empty($error)): ?>
                     <div class="alert alert-danger login-alert">
                         <i class="fas fa-exclamation-circle"></i>
                         <span><?php echo htmlspecialchars($error); ?></span>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (!$pdo): ?>
+                    <div class="alert alert-warning login-alert login-db-hint">
+                        <i class="fas fa-plug-circle-exclamation"></i>
+                        <span>MySQL not connected. Start XAMPP MySQL or verify online credentials, then run database setup below.</span>
                     </div>
                     <?php endif; ?>
 
@@ -143,10 +215,32 @@ $loginSchoolName = $loginSchool['name'] ?: 'EduDash';
                             </div>
                         </div>
                         <button type="submit" class="btn-admin btn-login">
-                            <span>Sign In to Dashboard</span>
+                            <span>Sign in to admin</span>
                             <i class="fas fa-arrow-right"></i>
                         </button>
                     </form>
+
+                    <?php if (!$dbInstalled): ?>
+                    <div class="login-divider" aria-hidden="true"><span>First time setup</span></div>
+
+                    <section class="login-install-card" id="loginInstallCard">
+                        <div class="login-install-head">
+                            <span class="login-install-icon" aria-hidden="true"><i class="fas fa-database"></i></span>
+                            <div class="login-install-copy">
+                                <h3>Database Setup</h3>
+                                <p>Install database and all ERP tables on <strong><?php echo htmlspecialchars($dbSetupTarget); ?></strong>.</p>
+                            </div>
+                        </div>
+                        <form action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" method="post" class="login-install-form" id="dbSetupForm">
+                            <input type="hidden" name="action" value="db_setup">
+                            <button type="submit" class="login-install-btn" id="dbSetupBtn">
+                                <i class="fas fa-wrench"></i>
+                                <span>Run Database Setup</span>
+                            </button>
+                        </form>
+                        <p class="login-install-note">Default login after setup: <code>admin</code> / <code>admin123</code></p>
+                    </section>
+                    <?php endif; ?>
 
                     <div class="login-portal-links">
                         <a href="../teacher/" class="login-portal-link"><i class="fas fa-chalkboard-teacher"></i> Teacher Portal</a>
@@ -177,6 +271,15 @@ $loginSchoolName = $loginSchool['name'] ?: 'EduDash';
                 icon.classList.replace('fa-eye-slash', 'fa-eye');
             }
         });
+
+        var dbSetupForm = document.getElementById('dbSetupForm');
+        if (dbSetupForm) {
+            dbSetupForm.addEventListener('submit', function () {
+                var btn = document.getElementById('dbSetupBtn');
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Installing tables…</span>';
+            });
+        }
     </script>
 </body>
 </html>

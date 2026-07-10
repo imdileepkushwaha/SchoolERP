@@ -34,7 +34,7 @@ if (strpos($sp_photo, 'http') !== 0) {
 }
 $sp_ad_no = htmlspecialchars($student['ad_no']);
 $school = getSchoolProfile($pdo);
-$sp_logo_url = schoolBrandingUrl($school['logo'] ?? '', 'portal');
+$sp_logo_url = schoolSidebarLogoUrl($school, 'portal');
 $sp_favicon_url = schoolBrandingUrl($school['favicon'] ?? '', 'portal');
 
 function sp_nav_active($page) {
