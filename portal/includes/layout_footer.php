@@ -27,19 +27,41 @@ function spToggleUserMenu(e) {
 
 (function () {
     var toggle = document.getElementById('spMenuToggle');
+    var closeBtn = document.getElementById('spSidebarClose');
     var sidebar = document.getElementById('spSidebar');
     var overlay = document.getElementById('spOverlay');
+
+    function openSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.add('open');
+        if (overlay) overlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.remove('open');
+        if (overlay) overlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    function toggleSidebar() {
+        if (!sidebar) return;
+        if (sidebar.classList.contains('open')) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    }
+
     if (toggle && sidebar) {
-        toggle.addEventListener('click', function () {
-            sidebar.classList.toggle('open');
-            if (overlay) overlay.classList.toggle('active');
-        });
+        toggle.addEventListener('click', toggleSidebar);
+    }
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeSidebar);
     }
     if (overlay) {
-        overlay.addEventListener('click', function () {
-            sidebar.classList.remove('open');
-            overlay.classList.remove('active');
-        });
+        overlay.addEventListener('click', closeSidebar);
     }
 
     document.addEventListener('click', function (e) {

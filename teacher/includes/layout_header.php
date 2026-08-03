@@ -25,10 +25,13 @@ $page_subtitle = $page_subtitle ?? '';
                 <i class="fas fa-chalkboard-teacher"></i>
                 <?php endif; ?>
             </div>
-            <div>
+            <div class="tp-brand-text">
                 <h2><?php echo htmlspecialchars($tp_school['name']); ?></h2>
                 <span>Teacher Portal</span>
             </div>
+            <button type="button" class="tp-sidebar-close" id="tpSidebarClose" aria-label="Close menu">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
         <div class="tp-user-card">
             <img src="<?php echo htmlspecialchars($tp_photo); ?>" alt="<?php echo $tp_name; ?>">

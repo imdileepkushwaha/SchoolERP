@@ -357,21 +357,31 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!el) return;
     new ApexCharts(el, {
         series: [{ name: 'Collected', data: <?php echo json_encode($chartData); ?> }],
-        chart: { type: 'bar', height: 280, toolbar: { show: false }, fontFamily: 'Inter, sans-serif' },
-        plotOptions: { bar: { borderRadius: 8, columnWidth: '52%' } },
+        chart: {
+            type: 'bar',
+            height: window.innerWidth < 640 ? 220 : 280,
+            toolbar: { show: false },
+            fontFamily: 'Inter, sans-serif',
+            parentHeightOffset: 0
+        },
+        plotOptions: { bar: { borderRadius: window.innerWidth < 640 ? 4 : 8, columnWidth: window.innerWidth < 640 ? '60%' : '52%' } },
         dataLabels: { enabled: false },
-        grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
+        grid: { borderColor: '#f1f5f9', strokeDashArray: 4, padding: { left: 4, right: 4 } },
         xaxis: {
             categories: <?php echo json_encode($monthNames); ?>,
             axisBorder: { show: false },
             axisTicks: { show: false },
-            labels: { style: { colors: '#64748b', fontSize: '12px' } }
+            labels: {
+                style: { colors: '#64748b', fontSize: window.innerWidth < 640 ? '10px' : '12px' },
+                rotate: window.innerWidth < 480 ? -45 : 0,
+                hideOverlappingLabels: true
+            }
         },
         colors: ['#059669'],
         yaxis: {
             labels: {
                 formatter: function (v) { return '₹' + Math.round(v).toLocaleString('en-IN'); },
-                style: { colors: '#64748b', fontSize: '12px' }
+                style: { colors: '#64748b', fontSize: window.innerWidth < 640 ? '10px' : '12px' }
             }
         },
         tooltip: {

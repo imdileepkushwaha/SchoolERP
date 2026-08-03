@@ -24,7 +24,10 @@ $page_subtitle = $page_subtitle ?? '';
                 <i class="fas fa-graduation-cap"></i>
                 <?php endif; ?>
             </div>
-            <div><h2><?php echo htmlspecialchars($school['name']); ?></h2><span>Student Portal</span></div>
+            <div class="sp-brand-text"><h2><?php echo htmlspecialchars($school['name']); ?></h2><span>Student Portal</span></div>
+            <button type="button" class="sp-sidebar-close" id="spSidebarClose" aria-label="Close menu">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
         <div class="sp-user-card">
             <img src="<?php echo htmlspecialchars($sp_photo); ?>" alt="<?php echo $sp_name; ?>">

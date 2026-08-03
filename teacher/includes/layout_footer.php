@@ -27,19 +27,41 @@ function tpToggleUserMenu(e) {
 
 (function () {
     var toggle = document.getElementById('tpMenuToggle');
+    var closeBtn = document.getElementById('tpSidebarClose');
     var sidebar = document.getElementById('tpSidebar');
     var overlay = document.getElementById('tpOverlay');
+
+    function openSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.add('open');
+        if (overlay) overlay.classList.add('open');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.remove('open');
+        if (overlay) overlay.classList.remove('open');
+        document.body.style.overflow = '';
+    }
+
+    function toggleSidebar() {
+        if (!sidebar) return;
+        if (sidebar.classList.contains('open')) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    }
+
     if (toggle && sidebar) {
-        toggle.addEventListener('click', function () {
-            sidebar.classList.toggle('open');
-            if (overlay) overlay.classList.toggle('open');
-        });
+        toggle.addEventListener('click', toggleSidebar);
+    }
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeSidebar);
     }
     if (overlay) {
-        overlay.addEventListener('click', function () {
-            sidebar.classList.remove('open');
-            overlay.classList.remove('open');
-        });
+        overlay.addEventListener('click', closeSidebar);
     }
 
     document.addEventListener('click', function (e) {
