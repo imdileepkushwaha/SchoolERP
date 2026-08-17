@@ -92,15 +92,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'return_book' && isset($_POST['issue_id'])) {
         $issueId = (int) $_POST['issue_id'];
+        $fine = max(0, (float) ($_POST['fine'] ?? 0));
         $stmt = $pdo->prepare("SELECT * FROM library_issues WHERE id = ? AND status = 'Issued'");
         $stmt->execute([$issueId]);
         $issue = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$issue) {
             $_SESSION['error_msg'] = 'Issue record not found.';
         } else {
-            $pdo->prepare("UPDATE library_issues SET status = 'Returned', return_date = CURDATE() WHERE id = ?")->execute([$issueId]);
+            if ($fine <= 0 && !empty($issue['due_date']) && $issue['due_date'] < date('Y-m-d')) {
+                $days = (int) ((strtotime(date('Y-m-d')) - strtotime($issue['due_date'])) / 86400);
+                $perDay = (float) (function_exists('getSetting') ? getSetting($pdo, 'library_fine_per_day', '5') : 5);
+                $fine = max(0, $days * $perDay);
+            }
+            $pdo->prepare("UPDATE library_issues SET status = 'Returned', return_date = CURDATE(), fine = ? WHERE id = ?")
+                ->execute([$fine, $issueId]);
             $pdo->prepare('UPDATE library_books SET available = available + 1 WHERE id = ?')->execute([(int) $issue['book_id']]);
-            $_SESSION['success_msg'] = 'Book returned.';
+            $_SESSION['success_msg'] = $fine > 0 ? ('Book returned. Fine: ₹' . number_format($fine, 2)) : 'Book returned.';
+        }
+    } elseif ($action === 'mark_lost' && isset($_POST['issue_id'])) {
+        $issueId = (int) ($_POST['issue_id'] ?? 0);
+        $fine = max(0, (float) ($_POST['fine'] ?? 0));
+        $stmt = $pdo->prepare("SELECT * FROM library_issues WHERE id = ? AND status = 'Issued'");
+        $stmt->execute([$issueId]);
+        $issue = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$issue) {
+            $_SESSION['error_msg'] = 'Issue record not found.';
+        } else {
+            if ($fine <= 0) {
+                $fine = 200;
+            }
+            $pdo->prepare("UPDATE library_issues SET status = 'Lost', return_date = CURDATE(), fine = ?, remarks = CONCAT(IFNULL(remarks,''), IF(IFNULL(remarks,'')='','',' '), '[Lost]') WHERE id = ?")
+                ->execute([$fine, $issueId]);
+            // Issued copy was already removed from available; reduce catalogue copies permanently.
+            $pdo->prepare('UPDATE library_books SET copies = GREATEST(copies - 1, 0) WHERE id = ?')
+                ->execute([(int) $issue['book_id']]);
+            $_SESSION['success_msg'] = 'Book marked lost. Fine: ₹' . number_format($fine, 2);
         }
     } elseif ($action === 'update_book' && isset($_POST['id'])) {
         $bookId = (int) $_POST['id'];
@@ -321,20 +347,21 @@ $availableBooks = array_filter($books, fn($b) => (int) $b['available'] > 0);
                 <tbody>
                 <?php foreach ($categories as $c): ?>
                 <tr>
+                    <td><strong><?php echo htmlspecialchars($c['name']); ?></strong></td>
                     <td>
-                        <form method="POST" class="category-add-row" style="gap:8px;align-items:center">
-                            <input type="hidden" name="action" value="update_category">
-                            <input type="hidden" name="id" value="<?php echo (int) $c['id']; ?>">
-                            <input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($c['name']); ?>" required style="min-width:160px">
-                            <button type="submit" class="action-btn" title="Save"><i class="fas fa-save"></i></button>
-                        </form>
-                    </td>
-                    <td>
-                        <form method="POST" style="margin:0" onsubmit="return confirm('Delete this category?');">
-                            <input type="hidden" name="action" value="delete_category">
-                            <input type="hidden" name="id" value="<?php echo (int) $c['id']; ?>">
-                            <button type="submit" class="action-btn delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
-                        </form>
+                        <div class="table-action-btns">
+                            <button type="button" class="action-btn edit-btn" title="Edit"
+                                data-erp-edit-lib-cat
+                                data-id="<?php echo (int) $c['id']; ?>"
+                                data-name="<?php echo htmlspecialchars($c['name'], ENT_QUOTES); ?>">
+                                <i class="fas fa-pen"></i>
+                            </button>
+                            <form method="POST" style="margin:0" onsubmit="return confirm('Delete this category?');">
+                                <input type="hidden" name="action" value="delete_category">
+                                <input type="hidden" name="id" value="<?php echo (int) $c['id']; ?>">
+                                <button type="submit" class="action-btn delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
+                            </form>
+                        </div>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -475,10 +502,16 @@ $availableBooks = array_filter($books, fn($b) => (int) $b['available'] > 0);
     </div>
     <div class="table-wrap">
         <table>
-            <thead><tr><th>Student</th><th>Adm No</th><th>Book</th><th>Issued</th><th>Due</th><th class="th-actions">Actions</th></tr></thead>
+            <thead><tr><th>Student</th><th>Adm No</th><th>Book</th><th>Issued</th><th>Due</th><th>Fine (₹)</th><th class="th-actions">Actions</th></tr></thead>
             <tbody>
             <?php foreach ($issues as $i):
                 $overdue = !empty($i['due_date']) && $i['due_date'] < date('Y-m-d');
+                $suggestedFine = 0;
+                if ($overdue) {
+                    $days = (int) ((strtotime(date('Y-m-d')) - strtotime($i['due_date'])) / 86400);
+                    $perDay = (float) (function_exists('getSetting') ? getSetting($pdo, 'library_fine_per_day', '5') : 5);
+                    $suggestedFine = max(0, $days * $perDay);
+                }
             ?>
             <tr>
                 <td><strong><?php echo htmlspecialchars($i['name']); ?></strong></td>
@@ -487,7 +520,11 @@ $availableBooks = array_filter($books, fn($b) => (int) $b['available'] > 0);
                 <td><?php echo htmlspecialchars($i['issue_date']); ?></td>
                 <td><?php echo htmlspecialchars($i['due_date'] ?: '—'); ?><?php echo $overdue ? ' <span class="badge-cancelled">Overdue</span>' : ''; ?></td>
                 <td>
+                    <input type="number" step="0.01" min="0" form="return-<?php echo (int) $i['id']; ?>" name="fine" class="form-input" style="width:90px" value="<?php echo $suggestedFine > 0 ? $suggestedFine : ''; ?>" placeholder="0">
+                </td>
+                <td style="white-space:nowrap">
                     <button type="submit" form="return-<?php echo (int) $i['id']; ?>" class="action-btn" title="Return book" onclick="return confirm('Mark this book as returned?');"><i class="fas fa-undo"></i></button>
+                    <button type="submit" form="lost-<?php echo (int) $i['id']; ?>" class="action-btn delete-btn" title="Mark lost" onclick="var f=document.getElementById('lost-fine-<?php echo (int) $i['id']; ?>'); var src=document.querySelector('#return-<?php echo (int) $i['id']; ?> input[name=fine]'); if(f&&src) f.value=src.value||200; return confirm('Mark this book as LOST and charge fine?');"><i class="fas fa-book-dead"></i></button>
                 </td>
             </tr>
             <?php endforeach; ?>
@@ -518,29 +555,21 @@ $availableBooks = array_filter($books, fn($b) => (int) $b['available'] > 0);
                 <td><?php echo (int) $b['copies']; ?></td>
                 <td><?php echo (int) $b['available']; ?></td>
                 <td>
-                    <details class="erp-vehicle-edit" style="display:inline-block;vertical-align:middle">
-                        <summary style="cursor:pointer;list-style:none" title="Edit book"><i class="fas fa-pen"></i></summary>
-                        <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:8px;min-width:320px">
-                            <input type="hidden" name="action" value="update_book">
-                            <input type="hidden" name="id" value="<?php echo (int) $b['id']; ?>">
-                            <div class="form-field"><label>Title</label><input type="text" name="title" class="form-input" value="<?php echo htmlspecialchars($b['title']); ?>" required></div>
-                            <div class="form-field"><label>Author</label><input type="text" name="author" class="form-input" value="<?php echo htmlspecialchars($b['author'] ?? ''); ?>"></div>
-                            <div class="form-field"><label>Category</label>
-                                <select name="category_id" class="form-input">
-                                    <option value="">—</option>
-                                    <?php foreach ($categories as $c): ?>
-                                    <option value="<?php echo (int) $c['id']; ?>" <?php echo (int) ($b['category_id'] ?? 0) === (int) $c['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($c['name']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="form-field"><label>ISBN</label><input type="text" name="isbn" class="form-input" value="<?php echo htmlspecialchars($b['isbn'] ?? ''); ?>"></div>
-                            <div class="form-field"><label>Publisher</label><input type="text" name="publisher" class="form-input" value="<?php echo htmlspecialchars($b['publisher'] ?? ''); ?>"></div>
-                            <div class="form-field"><label>Copies</label><input type="number" name="copies" class="form-input" min="1" value="<?php echo (int) $b['copies']; ?>"></div>
-                            <div class="form-field"><label>Shelf</label><input type="text" name="shelf" class="form-input" value="<?php echo htmlspecialchars($b['shelf'] ?? ''); ?>"></div>
-                            <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm">Save</button></div>
-                        </form>
-                    </details>
-                    <button type="submit" form="book-delete-<?php echo (int) $b['id']; ?>" class="action-btn delete-btn" title="Remove book" onclick="return confirm('Remove this book from catalogue?');"><i class="fas fa-trash"></i></button>
+                    <div class="table-action-btns">
+                        <button type="button" class="action-btn edit-btn" title="Edit"
+                            data-erp-edit-book
+                            data-id="<?php echo (int) $b['id']; ?>"
+                            data-title="<?php echo htmlspecialchars($b['title'], ENT_QUOTES); ?>"
+                            data-author="<?php echo htmlspecialchars($b['author'] ?? '', ENT_QUOTES); ?>"
+                            data-category="<?php echo (int) ($b['category_id'] ?? 0); ?>"
+                            data-isbn="<?php echo htmlspecialchars($b['isbn'] ?? '', ENT_QUOTES); ?>"
+                            data-publisher="<?php echo htmlspecialchars($b['publisher'] ?? '', ENT_QUOTES); ?>"
+                            data-copies="<?php echo (int) $b['copies']; ?>"
+                            data-shelf="<?php echo htmlspecialchars($b['shelf'] ?? '', ENT_QUOTES); ?>">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <button type="submit" form="book-delete-<?php echo (int) $b['id']; ?>" class="action-btn delete-btn" title="Remove book" onclick="return confirm('Remove this book from catalogue?');"><i class="fas fa-trash"></i></button>
+                    </div>
                 </td>
             </tr>
             <?php endforeach; ?>
@@ -555,6 +584,11 @@ $availableBooks = array_filter($books, fn($b) => (int) $b['available'] > 0);
     <input type="hidden" name="action" value="return_book">
     <input type="hidden" name="issue_id" value="<?php echo (int) $i['id']; ?>">
 </form>
+<form method="POST" id="lost-<?php echo (int) $i['id']; ?>" class="hidden-form">
+    <input type="hidden" name="action" value="mark_lost">
+    <input type="hidden" name="issue_id" value="<?php echo (int) $i['id']; ?>">
+    <input type="hidden" name="fine" id="lost-fine-<?php echo (int) $i['id']; ?>" value="200">
+</form>
 <?php endforeach; ?>
 <?php foreach ($books as $b): ?>
 <form method="POST" id="book-delete-<?php echo (int) $b['id']; ?>" class="hidden-form">
@@ -562,29 +596,132 @@ $availableBooks = array_filter($books, fn($b) => (int) $b['available'] > 0);
     <input type="hidden" name="id" value="<?php echo (int) $b['id']; ?>">
 </form>
 <?php endforeach; ?>
+
+<div class="fs-modal" id="bookEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-book-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="bookEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-book"></i></div>
+            <div>
+                <h3 id="bookEditModalTitle">Edit Book</h3>
+                <p>Update catalogue details and copies</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-book-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_book">
+            <input type="hidden" name="id" id="bookEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="bookEditTitle">Title</label><input type="text" name="title" id="bookEditTitle" class="form-input" required></div>
+                <div class="form-field"><label for="bookEditAuthor">Author</label><input type="text" name="author" id="bookEditAuthor" class="form-input"></div>
+                <div class="form-field"><label for="bookEditCategory">Category</label>
+                    <select name="category_id" id="bookEditCategory" class="form-input form-select">
+                        <option value="">—</option>
+                        <?php foreach ($categories as $c): ?>
+                        <option value="<?php echo (int) $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label for="bookEditIsbn">ISBN</label><input type="text" name="isbn" id="bookEditIsbn" class="form-input"></div>
+                <div class="form-field"><label for="bookEditPublisher">Publisher</label><input type="text" name="publisher" id="bookEditPublisher" class="form-input"></div>
+                <div class="form-field"><label for="bookEditCopies">Copies</label><input type="number" name="copies" id="bookEditCopies" class="form-input" min="1" required></div>
+                <div class="form-field"><label for="bookEditShelf">Shelf</label><input type="text" name="shelf" id="bookEditShelf" class="form-input"></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-book-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="fs-modal" id="libCatEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-libcat-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="libCatEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-tags"></i></div>
+            <div>
+                <h3 id="libCatEditModalTitle">Edit Category</h3>
+                <p>Update library category name</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-libcat-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_category">
+            <input type="hidden" name="id" id="libCatEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="libCatEditName">Category Name</label><input type="text" name="name" id="libCatEditName" class="form-input" required></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-libcat-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
 <script>
 (function () {
     var classSel = document.getElementById('libIssueClass');
     var sectionSel = document.getElementById('libIssueSection');
-    if (!classSel || !sectionSel) return;
-    classSel.addEventListener('change', function () {
-        var cls = this.value;
-        var current = sectionSel.value;
-        sectionSel.innerHTML = '<option value="">All sections</option>';
-        if (!cls) return;
-        fetch('library.php?action=sections&class=' + encodeURIComponent(cls))
-            .then(function (res) { return res.json(); })
-            .then(function (data) {
-                (data.sections || []).forEach(function (sec) {
-                    var opt = document.createElement('option');
-                    opt.value = sec;
-                    opt.textContent = sec;
-                    if (sec === current) opt.selected = true;
-                    sectionSel.appendChild(opt);
-                });
-            })
-            .catch(function () {});
-    });
+    if (classSel && sectionSel) {
+        classSel.addEventListener('change', function () {
+            var cls = this.value;
+            var current = sectionSel.value;
+            sectionSel.innerHTML = '<option value="">All sections</option>';
+            if (!cls) return;
+            fetch('library.php?action=sections&class=' + encodeURIComponent(cls))
+                .then(function (res) { return res.json(); })
+                .then(function (data) {
+                    (data.sections || []).forEach(function (sec) {
+                        var opt = document.createElement('option');
+                        opt.value = sec;
+                        opt.textContent = sec;
+                        if (sec === current) opt.selected = true;
+                        sectionSel.appendChild(opt);
+                    });
+                })
+                .catch(function () {});
+        });
+    }
+
+    function wire(modalId, openSel, closeSel, fill, focusId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+        function open() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('fs-modal-open');
+            var el = document.getElementById(focusId);
+            if (el) setTimeout(function () { el.focus(); if (el.select) el.select(); }, 120);
+        }
+        function close() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            if (!document.querySelector('.fs-modal.is-open')) document.body.classList.remove('fs-modal-open');
+        }
+        document.querySelectorAll(openSel).forEach(function (btn) {
+            btn.addEventListener('click', function () { fill(btn); open(); });
+        });
+        modal.querySelectorAll(closeSel).forEach(function (el) { el.addEventListener('click', close); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) close();
+        });
+    }
+    wire('bookEditModal', '[data-erp-edit-book]', '[data-book-modal-close]', function (btn) {
+        document.getElementById('bookEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('bookEditTitle').value = btn.getAttribute('data-title') || '';
+        document.getElementById('bookEditAuthor').value = btn.getAttribute('data-author') || '';
+        document.getElementById('bookEditCategory').value = btn.getAttribute('data-category') || '';
+        document.getElementById('bookEditIsbn').value = btn.getAttribute('data-isbn') || '';
+        document.getElementById('bookEditPublisher').value = btn.getAttribute('data-publisher') || '';
+        document.getElementById('bookEditCopies').value = btn.getAttribute('data-copies') || '1';
+        document.getElementById('bookEditShelf').value = btn.getAttribute('data-shelf') || '';
+    }, 'bookEditTitle');
+    wire('libCatEditModal', '[data-erp-edit-lib-cat]', '[data-libcat-modal-close]', function (btn) {
+        document.getElementById('libCatEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('libCatEditName').value = btn.getAttribute('data-name') || '';
+    }, 'libCatEditName');
 })();
 </script>
 <?php require_once 'includes/footer.php'; ?>

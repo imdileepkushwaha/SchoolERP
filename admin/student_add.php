@@ -14,6 +14,28 @@ $category_options = getCategoryOptions($pdo);
 $form_data = getDefaultStudentFormData();
 $mode = 'add';
 $generated_roll = '';
+$enquiryId = (int) ($_POST['enquiry_id'] ?? $_GET['enquiry_id'] ?? 0);
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    $enquiry = [];
+    if ($enquiryId > 0) {
+        $stmt = $pdo->prepare("SELECT * FROM admission_enquiries WHERE id = ?");
+        $stmt->execute([$enquiryId]);
+        $enquiry = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
+    $prefill = [
+        'name' => trim((string) ($_GET['name'] ?? ($enquiry['student_name'] ?? ''))),
+        'mobile' => trim((string) ($_GET['mobile'] ?? ($enquiry['mobile'] ?? ''))),
+        'email' => trim((string) ($_GET['email'] ?? ($enquiry['email'] ?? ''))),
+        'class' => trim((string) ($_GET['class'] ?? ($enquiry['class_sought'] ?? ''))),
+        'father_name' => trim((string) ($_GET['father_name'] ?? $_GET['parent_name'] ?? ($enquiry['parent_name'] ?? ''))),
+    ];
+    foreach ($prefill as $key => $val) {
+        if ($val !== '') {
+            $form_data[$key] = $val;
+        }
+    }
+}
 
 if ($form_data['class'] !== '') {
     $generated_roll = $form_data['roll'] !== ''
@@ -72,6 +94,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $student_id = $pdo->lastInsertId();
             saveStudentGuardians($pdo, $student_id, guardiansFromForm($_POST));
 
+            if ($enquiryId > 0) {
+                $pdo->prepare("UPDATE admission_enquiries SET status = 'Converted' WHERE id = ?")->execute([$enquiryId]);
+            }
+
             $_SESSION['success_msg'] = 'Student added! Admission No: ' . $ad_no;
             header('Location: students.php');
             exit;
@@ -110,6 +136,9 @@ require_once 'includes/header.php';
 </div>
 
 <form method="POST" class="student-form" enctype="multipart/form-data">
+<?php if ($enquiryId > 0): ?>
+    <input type="hidden" name="enquiry_id" value="<?php echo $enquiryId; ?>">
+<?php endif; ?>
 <?php include 'includes/student_form_sections.php'; ?>
     <div class="form-actions-bar">
         <a href="students.php" class="btn-header-action btn-header-outline"><i class="fas fa-times"></i> Cancel</a>

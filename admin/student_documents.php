@@ -27,8 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_doc']) && $stu
     exit;
 }
 
-if (isset($_GET['delete']) && $studentId) {
-    $docId = (int) $_GET['delete'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_doc' && $student) {
+    $docId = (int) ($_POST['id'] ?? 0);
     $stmt = $pdo->prepare("SELECT * FROM student_documents WHERE id = ? AND student_id = ?");
     $stmt->execute([$docId, $studentId]);
     $doc = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -203,7 +203,12 @@ $docTypes = ['Birth Certificate', 'Aadhaar', 'Transfer Certificate', 'Previous M
             </div>
             <div class="doc-card-actions">
                 <a href="<?php echo htmlspecialchars($d['file_path']); ?>" target="_blank" class="doc-card-btn doc-card-btn-view" title="Open file"><i class="fas fa-external-link-alt"></i></a>
-                <a href="student_documents.php?student_id=<?php echo $studentId; ?>&delete=<?php echo $d['id']; ?>" class="doc-card-btn doc-card-btn-delete btn-delete-confirm" title="Delete" onclick="return confirm('Delete this document?');"><i class="fas fa-trash-alt"></i></a>
+                <form method="POST" style="margin:0" onsubmit="return confirm('Delete this document?');">
+                    <input type="hidden" name="action" value="delete_doc">
+                    <input type="hidden" name="student_id" value="<?php echo (int) $studentId; ?>">
+                    <input type="hidden" name="id" value="<?php echo (int) $d['id']; ?>">
+                    <button type="submit" class="doc-card-btn doc-card-btn-delete" title="Delete"><i class="fas fa-trash-alt"></i></button>
+                </form>
             </div>
         </div>
         <?php endforeach; ?>

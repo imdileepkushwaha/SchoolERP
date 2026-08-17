@@ -317,26 +317,19 @@ foreach ($assignments as $a) {
                 <i class="fas fa-user-slash"></i> No driver assigned
             </div>
             <?php endif; ?>
-            <details class="erp-vehicle-edit">
-                <summary><i class="fas fa-pen"></i> Edit / Delete</summary>
-                <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:10px">
-                    <input type="hidden" name="action" value="update_vehicle">
-                    <input type="hidden" name="id" value="<?php echo (int) $v['id']; ?>">
-                    <div class="form-field"><label>Vehicle No</label><input type="text" name="vehicle_no" class="form-input" value="<?php echo htmlspecialchars($v['vehicle_no']); ?>" required></div>
-                    <div class="form-field"><label>Model</label><input type="text" name="model" class="form-input" value="<?php echo htmlspecialchars($v['model'] ?? ''); ?>"></div>
-                    <div class="form-field"><label>Capacity</label><input type="number" name="capacity" class="form-input" value="<?php echo (int) $v['capacity']; ?>" min="1"></div>
-                    <div class="form-field"><label>Driver</label><input type="text" name="driver_name" class="form-input" value="<?php echo htmlspecialchars($v['driver_name'] ?? ''); ?>"></div>
-                    <div class="form-field form-field-full"><label>Phone</label><input type="text" name="driver_phone" class="form-input" value="<?php echo htmlspecialchars($v['driver_phone'] ?? ''); ?>"></div>
-                    <div class="form-actions-end form-field-full" style="display:flex;gap:8px;justify-content:flex-end">
-                        <button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save</button>
-                    </div>
-                </form>
-                <form method="POST" style="margin-top:8px;text-align:right" onsubmit="return confirm('Delete this vehicle?');">
-                    <input type="hidden" name="action" value="delete_vehicle">
-                    <input type="hidden" name="id" value="<?php echo (int) $v['id']; ?>">
-                    <button type="submit" class="btn-header-action btn-header-outline btn-sm" style="color:#b91c1c"><i class="fas fa-trash"></i> Delete</button>
-                </form>
-            </details>
+            <div class="table-action-btns" style="margin-top:12px;justify-content:flex-end">
+                <button type="button" class="action-btn edit-btn" title="Edit"
+                    data-erp-edit-vehicle
+                    data-id="<?php echo (int) $v['id']; ?>"
+                    data-vehicle-no="<?php echo htmlspecialchars($v['vehicle_no'], ENT_QUOTES); ?>"
+                    data-model="<?php echo htmlspecialchars($v['model'] ?? '', ENT_QUOTES); ?>"
+                    data-capacity="<?php echo (int) $v['capacity']; ?>"
+                    data-driver="<?php echo htmlspecialchars($v['driver_name'] ?? '', ENT_QUOTES); ?>"
+                    data-phone="<?php echo htmlspecialchars($v['driver_phone'] ?? '', ENT_QUOTES); ?>">
+                    <i class="fas fa-pen"></i>
+                </button>
+                <button type="submit" form="vehicle-delete-<?php echo (int) $v['id']; ?>" class="action-btn delete-btn" title="Delete vehicle" onclick="return confirm('Delete this vehicle?');"><i class="fas fa-trash"></i></button>
+            </div>
         </article>
         <?php endforeach; ?>
     </div>
@@ -369,35 +362,21 @@ foreach ($assignments as $a) {
                     </span>
                 </div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <div class="table-action-btns">
             <?php if ($r['driver_name']): ?>
             <span class="promo-next-pill"><i class="fas fa-user"></i> <?php echo htmlspecialchars($r['driver_name']); ?></span>
             <?php endif; ?>
-            <form method="POST" onsubmit="return confirm('Delete this route and its stops?');">
-                <input type="hidden" name="action" value="delete_route">
-                <input type="hidden" name="id" value="<?php echo (int) $r['id']; ?>">
-                <button type="submit" class="action-btn delete-btn" title="Delete route"><i class="fas fa-trash"></i></button>
-            </form>
+            <button type="button" class="action-btn edit-btn" title="Edit"
+                data-erp-edit-route
+                data-id="<?php echo (int) $r['id']; ?>"
+                data-name="<?php echo htmlspecialchars($r['name'], ENT_QUOTES); ?>"
+                data-vehicle="<?php echo (int) ($r['vehicle_id'] ?? 0); ?>"
+                data-fare="<?php echo htmlspecialchars((string) $r['fare'], ENT_QUOTES); ?>">
+                <i class="fas fa-pen"></i>
+            </button>
+            <button type="submit" form="route-delete-<?php echo (int) $r['id']; ?>" class="action-btn delete-btn" title="Delete route" onclick="return confirm('Delete this route and its stops?');"><i class="fas fa-trash"></i></button>
             </div>
         </div>
-        <details class="erp-vehicle-edit" style="margin:8px 0 12px">
-            <summary><i class="fas fa-pen"></i> Edit route</summary>
-            <form method="POST" class="form-grid form-grid-3 form-grid-spaced" style="margin-top:10px">
-                <input type="hidden" name="action" value="update_route">
-                <input type="hidden" name="id" value="<?php echo (int) $r['id']; ?>">
-                <div class="form-field"><label>Name</label><input type="text" name="route_name" class="form-input" value="<?php echo htmlspecialchars($r['name']); ?>" required></div>
-                <div class="form-field"><label>Vehicle</label>
-                    <select name="vehicle_id" class="form-input form-select">
-                        <option value="">No vehicle</option>
-                        <?php foreach ($vehicles as $v): ?>
-                        <option value="<?php echo (int) $v['id']; ?>" <?php echo (int) ($r['vehicle_id'] ?? 0) === (int) $v['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($v['vehicle_no']); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-field"><label>Fare (₹)</label><input type="number" step="0.01" name="fare" class="form-input" value="<?php echo htmlspecialchars((string) $r['fare']); ?>" min="0"></div>
-                <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save Route</button></div>
-            </form>
-        </details>
         <form method="POST" class="erp-stop-add-row">
             <input type="hidden" name="action" value="add_stop">
             <input type="hidden" name="route_id" value="<?php echo $r['id']; ?>">
@@ -541,6 +520,82 @@ foreach ($assignments as $a) {
     </div>
 </div>
 
+<?php foreach ($vehicles as $v): ?>
+<form method="POST" id="vehicle-delete-<?php echo (int) $v['id']; ?>" class="hidden-form">
+    <input type="hidden" name="action" value="delete_vehicle">
+    <input type="hidden" name="id" value="<?php echo (int) $v['id']; ?>">
+</form>
+<?php endforeach; ?>
+<?php foreach ($routes as $r): ?>
+<form method="POST" id="route-delete-<?php echo (int) $r['id']; ?>" class="hidden-form">
+    <input type="hidden" name="action" value="delete_route">
+    <input type="hidden" name="id" value="<?php echo (int) $r['id']; ?>">
+</form>
+<?php endforeach; ?>
+
+<div class="fs-modal" id="vehicleEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-vehicle-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="vehicleEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-bus"></i></div>
+            <div>
+                <h3 id="vehicleEditModalTitle">Edit Vehicle</h3>
+                <p>Update vehicle details and driver info</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-vehicle-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_vehicle">
+            <input type="hidden" name="id" id="vehicleEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="vehicleEditNo">Vehicle No</label><input type="text" name="vehicle_no" id="vehicleEditNo" class="form-input" required></div>
+                <div class="form-field"><label for="vehicleEditModel">Model</label><input type="text" name="model" id="vehicleEditModel" class="form-input"></div>
+                <div class="form-field"><label for="vehicleEditCap">Capacity</label><input type="number" name="capacity" id="vehicleEditCap" class="form-input" min="1" required></div>
+                <div class="form-field"><label for="vehicleEditDriver">Driver</label><input type="text" name="driver_name" id="vehicleEditDriver" class="form-input"></div>
+                <div class="form-field"><label for="vehicleEditPhone">Phone</label><input type="text" name="driver_phone" id="vehicleEditPhone" class="form-input"></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-vehicle-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="fs-modal" id="routeEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-route-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="routeEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-route"></i></div>
+            <div>
+                <h3 id="routeEditModalTitle">Edit Route</h3>
+                <p>Update route name, vehicle and fare</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-route-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_route">
+            <input type="hidden" name="id" id="routeEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="routeEditName">Name</label><input type="text" name="route_name" id="routeEditName" class="form-input" required></div>
+                <div class="form-field"><label for="routeEditVehicle">Vehicle</label>
+                    <select name="vehicle_id" id="routeEditVehicle" class="form-input form-select">
+                        <option value="">No vehicle</option>
+                        <?php foreach ($vehicles as $v): ?>
+                        <option value="<?php echo (int) $v['id']; ?>"><?php echo htmlspecialchars($v['vehicle_no']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label for="routeEditFare">Fare (₹)</label><input type="number" step="0.01" name="fare" id="routeEditFare" class="form-input" min="0"></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-route-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 (function () {
     var stopsByRoute = <?php echo json_encode($stopsByRoute); ?>;
@@ -561,6 +616,45 @@ foreach ($assignments as $a) {
         routeSel.addEventListener('change', fillStops);
         fillStops();
     });
+
+    function wire(modalId, openSel, closeSel, fill, focusId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+        function open() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('fs-modal-open');
+            var el = document.getElementById(focusId);
+            if (el) setTimeout(function () { el.focus(); if (el.select) el.select(); }, 120);
+        }
+        function close() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            if (!document.querySelector('.fs-modal.is-open')) document.body.classList.remove('fs-modal-open');
+        }
+        document.querySelectorAll(openSel).forEach(function (btn) {
+            btn.addEventListener('click', function () { fill(btn); open(); });
+        });
+        modal.querySelectorAll(closeSel).forEach(function (el) { el.addEventListener('click', close); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) close();
+        });
+    }
+    wire('vehicleEditModal', '[data-erp-edit-vehicle]', '[data-vehicle-modal-close]', function (btn) {
+        document.getElementById('vehicleEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('vehicleEditNo').value = btn.getAttribute('data-vehicle-no') || '';
+        document.getElementById('vehicleEditModel').value = btn.getAttribute('data-model') || '';
+        document.getElementById('vehicleEditCap').value = btn.getAttribute('data-capacity') || '1';
+        document.getElementById('vehicleEditDriver').value = btn.getAttribute('data-driver') || '';
+        document.getElementById('vehicleEditPhone').value = btn.getAttribute('data-phone') || '';
+    }, 'vehicleEditNo');
+    wire('routeEditModal', '[data-erp-edit-route]', '[data-route-modal-close]', function (btn) {
+        document.getElementById('routeEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('routeEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('routeEditVehicle').value = btn.getAttribute('data-vehicle') || '';
+        document.getElementById('routeEditFare').value = btn.getAttribute('data-fare') || '0';
+    }, 'routeEditName');
 })();
 </script>
 <?php require_once 'includes/footer.php'; ?>

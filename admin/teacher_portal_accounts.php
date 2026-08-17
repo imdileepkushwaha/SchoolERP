@@ -26,6 +26,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['enable_all_portal']))
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['disable_portal'])) {
+    $id = (int) $_POST['teacher_id'];
+    disableTeacherPortal($pdo, $id);
+    $_SESSION['success_msg'] = 'Teacher portal access disabled.';
+    header('Location: teacher_portal_accounts.php');
+    exit;
+}
+
 require_once 'includes/header.php';
 
 $defaultPass = getTeacherPortalDefaultPassword();
@@ -231,6 +239,11 @@ $pendingPreview = array_slice($pendingTeachers, 0, 8);
             <div class="tpa-enabled-meta">
                 <span class="status-badge badge-active">Active</span>
                 <a href="teacher_view.php?id=<?php echo (int) $e['id']; ?>" class="tpa-view-link">View profile <i class="fas fa-arrow-right"></i></a>
+                <form method="POST" onsubmit="return confirm('Disable portal access for this teacher?');" style="margin:0">
+                    <input type="hidden" name="disable_portal" value="1">
+                    <input type="hidden" name="teacher_id" value="<?php echo (int) $e['id']; ?>">
+                    <button type="submit" class="action-btn delete-btn" title="Disable portal"><i class="fas fa-ban"></i></button>
+                </form>
             </div>
         </div>
         <?php endforeach; ?>

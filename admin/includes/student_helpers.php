@@ -38,11 +38,19 @@ function ensureStudentSchema($pdo) {
         `id` int(11) NOT NULL AUTO_INCREMENT,
         `name` varchar(50) NOT NULL,
         `description` varchar(255) DEFAULT NULL,
+        `discount_percent` decimal(5,2) NOT NULL DEFAULT 0.00,
         `status` enum('Active','Inactive') NOT NULL DEFAULT 'Active',
         `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
         PRIMARY KEY (`id`),
         UNIQUE KEY `name` (`name`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM student_categories LIKE 'discount_percent'")->fetchAll();
+        if (!$cols) {
+            $pdo->exec("ALTER TABLE student_categories ADD COLUMN discount_percent decimal(5,2) NOT NULL DEFAULT 0.00 AFTER description");
+        }
+    } catch (PDOException $e) {
+    }
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS `student_guardians` (
         `id` int(11) NOT NULL AUTO_INCREMENT,

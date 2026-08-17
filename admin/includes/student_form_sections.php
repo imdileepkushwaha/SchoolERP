@@ -40,6 +40,9 @@ if (!empty($form_data['class']) && isset($pdo)) {
                     <?php foreach ($class_options as $opt): ?>
                     <option value="<?php echo htmlspecialchars($opt); ?>" <?php echo $form_data['class'] === $opt ? 'selected' : ''; ?>><?php echo htmlspecialchars($opt); ?></option>
                     <?php endforeach; ?>
+                    <?php if ($form_data['class'] !== '' && !in_array($form_data['class'], $class_options, true)): ?>
+                    <option value="<?php echo htmlspecialchars($form_data['class']); ?>" selected><?php echo htmlspecialchars($form_data['class']); ?></option>
+                    <?php endif; ?>
                 </select>
             </div>
             <div class="form-field">

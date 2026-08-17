@@ -11,8 +11,41 @@ $section = trim($_GET['section'] ?? 'A');
 $month = (int) ($_GET['month'] ?? date('n'));
 $year = (int) ($_GET['year'] ?? date('Y'));
 
-require_once 'includes/header.php';
 $report = ($class !== '') ? getAttendanceMonthlyReport($pdo, $class, $section, $year, $month) : null;
+
+if (isset($_GET['export']) && $_GET['export'] === 'csv' && $report) {
+    $filename = 'attendance_' . preg_replace('/\W+/', '_', $class . '_' . $section) . '_' . $year . '_' . sprintf('%02d', $month) . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
+    fputcsv($out, ['Student', 'Admission No', 'Roll', 'Present', 'Absent', 'Late', 'Half Day', 'Percentage']);
+    foreach ($report['students'] as $s) {
+        $rec = $report['records'][$s['id']] ?? [];
+        $counts = ['Present' => 0, 'Absent' => 0, 'Late' => 0, 'Half Day' => 0];
+        foreach ($rec as $st) {
+            if (isset($counts[$st])) {
+                $counts[$st]++;
+            }
+        }
+        $total = array_sum($counts);
+        $pct = $total ? round(($counts['Present'] + $counts['Late'] * 0.5) / $total * 100) : 0;
+        fputcsv($out, [
+            $s['name'],
+            $s['ad_no'] ?? '',
+            $s['roll'] ?? '',
+            $counts['Present'],
+            $counts['Absent'],
+            $counts['Late'],
+            $counts['Half Day'],
+            $pct,
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+require_once 'includes/header.php';
 ?>
 <div class="content-top-bar">
     <div class="content-top-main">
@@ -22,9 +55,15 @@ $report = ($class !== '') ? getAttendanceMonthlyReport($pdo, $class, $section, $
             <p class="content-top-breadcrumb"><a href="dashboard.php">Dashboard</a><i class="fas fa-chevron-right"></i><a href="attendance.php">Attendance</a><i class="fas fa-chevron-right"></i><span>Report</span></p>
         </div>
     </div>
+    <?php if ($report): ?>
+    <div class="content-top-actions">
+        <a href="attendance_report.php?<?php echo http_build_query(['class' => $class, 'section' => $section, 'month' => $month, 'year' => $year, 'export' => 'csv']); ?>" class="btn-header-action btn-header-outline"><i class="fas fa-file-csv"></i> Export CSV</a>
+        <button type="button" class="btn-header-action btn-header-primary" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+    </div>
+    <?php endif; ?>
 </div>
 
-<div class="form-section-card section-mb">
+<div class="form-section-card section-mb no-print">
     <form method="GET" class="category-add-form">
         <div class="category-add-row erp-filter-row-4">
             <div class="form-field"><label>Class</label><select name="class" class="form-input form-select" required><option value="">Select</option><?php foreach ($class_options as $c): ?><option value="<?php echo htmlspecialchars($c); ?>" <?php echo $class === $c ? 'selected' : ''; ?>><?php echo htmlspecialchars($c); ?></option><?php endforeach; ?></select></div>
@@ -65,4 +104,5 @@ $report = ($class !== '') ? getAttendanceMonthlyReport($pdo, $class, $section, $
     </div>
 </div>
 <?php endif; ?>
+<style>@media print{.no-print,.sidebar,.top-header,.content-top-actions{display:none!important}body{background:#fff}}</style>
 <?php require_once 'includes/footer.php'; ?>

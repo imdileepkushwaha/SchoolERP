@@ -205,23 +205,23 @@ foreach ($classes as $cls) {
                 ?>
                 <tr>
                     <td><?php echo $i + 1; ?></td>
-                    <td>
-                        <input type="text" name="name" form="cls-update-<?php echo $cls['id']; ?>" class="form-input table-inline-input" value="<?php echo htmlspecialchars($cls['name']); ?>">
-                    </td>
-                    <td>
-                        <input type="number" name="sort_order" form="cls-update-<?php echo $cls['id']; ?>" class="form-input table-inline-input table-inline-input-sm" value="<?php echo (int) $cls['sort_order']; ?>" min="0">
-                    </td>
+                    <td><strong><?php echo htmlspecialchars($cls['name']); ?></strong></td>
+                    <td><?php echo (int) $cls['sort_order']; ?></td>
                     <td><span class="badge-count"><?php echo count($sections); ?></span></td>
                     <td><?php echo $studentCount; ?></td>
                     <td>
-                        <select name="status" form="cls-update-<?php echo $cls['id']; ?>" class="form-input form-select table-inline-input">
-                            <option value="Active" <?php echo $cls['status'] === 'Active' ? 'selected' : ''; ?>>Active</option>
-                            <option value="Inactive" <?php echo $cls['status'] === 'Inactive' ? 'selected' : ''; ?>>Inactive</option>
-                        </select>
+                        <span class="promo-next-pill"><?php echo htmlspecialchars($cls['status']); ?></span>
                     </td>
                     <td>
                         <div class="table-action-btns">
-                            <button type="submit" form="cls-update-<?php echo $cls['id']; ?>" class="action-btn edit-btn" title="Save"><i class="fas fa-save"></i></button>
+                            <button type="button" class="action-btn edit-btn" title="Edit"
+                                data-erp-edit-class
+                                data-id="<?php echo (int) $cls['id']; ?>"
+                                data-name="<?php echo htmlspecialchars($cls['name'], ENT_QUOTES); ?>"
+                                data-sort="<?php echo (int) $cls['sort_order']; ?>"
+                                data-status="<?php echo htmlspecialchars($cls['status'], ENT_QUOTES); ?>">
+                                <i class="fas fa-pen"></i>
+                            </button>
                             <button type="submit" form="cls-delete-<?php echo $cls['id']; ?>" class="action-btn delete-btn" title="Delete" onclick="return confirm('Delete this class and all its sections?');"><i class="fas fa-trash"></i></button>
                         </div>
                     </td>
@@ -260,16 +260,17 @@ foreach ($classes as $cls) {
                                 <div class="section-chip <?php echo $isActive ? 'is-active' : 'is-inactive'; ?>">
                                     <div class="section-chip-badge" aria-hidden="true"><?php echo htmlspecialchars($sec['name']); ?></div>
                                     <div class="section-chip-main">
-                                        <label class="section-chip-label">Name</label>
-                                        <input type="text" name="name" form="sec-update-<?php echo $sec['id']; ?>" class="form-input section-chip-input" value="<?php echo htmlspecialchars($sec['name']); ?>" maxlength="10" aria-label="Section name">
-                                        <label class="section-chip-label">Status</label>
-                                        <select name="status" form="sec-update-<?php echo $sec['id']; ?>" class="form-input form-select section-chip-select section-chip-status-<?php echo $isActive ? 'active' : 'inactive'; ?>" aria-label="Section status">
-                                            <option value="Active" <?php echo $isActive ? 'selected' : ''; ?>>Active</option>
-                                            <option value="Inactive" <?php echo !$isActive ? 'selected' : ''; ?>>Inactive</option>
-                                        </select>
+                                        <strong class="section-chip-name"><?php echo htmlspecialchars($sec['name']); ?></strong>
+                                        <span class="promo-next-pill"><?php echo htmlspecialchars($sec['status']); ?></span>
                                     </div>
                                     <div class="section-chip-actions">
-                                        <button type="submit" form="sec-update-<?php echo $sec['id']; ?>" class="section-chip-btn section-chip-btn-save" title="Save section"><i class="fas fa-check"></i></button>
+                                        <button type="button" class="section-chip-btn section-chip-btn-save" title="Edit section"
+                                            data-erp-edit-section
+                                            data-id="<?php echo (int) $sec['id']; ?>"
+                                            data-name="<?php echo htmlspecialchars($sec['name'], ENT_QUOTES); ?>"
+                                            data-status="<?php echo htmlspecialchars($sec['status'], ENT_QUOTES); ?>">
+                                            <i class="fas fa-pen"></i>
+                                        </button>
                                         <button type="submit" form="sec-delete-<?php echo $sec['id']; ?>" class="section-chip-btn section-chip-btn-delete" title="Delete section" onclick="return confirm('Delete section <?php echo htmlspecialchars($sec['name']); ?>?');"><i class="fas fa-trash-alt"></i></button>
                                     </div>
                                 </div>
@@ -286,10 +287,6 @@ foreach ($classes as $cls) {
 </div>
 
 <?php foreach ($classes as $cls): ?>
-<form id="cls-update-<?php echo $cls['id']; ?>" method="POST" class="hidden-form">
-    <input type="hidden" name="action" value="update_class">
-    <input type="hidden" name="id" value="<?php echo $cls['id']; ?>">
-</form>
 <form id="cls-delete-<?php echo $cls['id']; ?>" method="POST" class="hidden-form">
     <input type="hidden" name="action" value="delete_class">
     <input type="hidden" name="id" value="<?php echo $cls['id']; ?>">
@@ -298,36 +295,111 @@ foreach ($classes as $cls) {
 
 <?php foreach ($classes as $cls):
     foreach ($sectionsByClass[$cls['id']] ?? [] as $sec): ?>
-<form id="sec-update-<?php echo $sec['id']; ?>" method="POST" class="hidden-form">
-    <input type="hidden" name="action" value="update_section">
-    <input type="hidden" name="id" value="<?php echo $sec['id']; ?>">
-</form>
 <form id="sec-delete-<?php echo $sec['id']; ?>" method="POST" class="hidden-form">
     <input type="hidden" name="action" value="delete_section">
     <input type="hidden" name="id" value="<?php echo $sec['id']; ?>">
 </form>
 <?php endforeach; endforeach; ?>
 
-<script>
-document.querySelectorAll('.section-chip-select').forEach(function (sel) {
-    sel.addEventListener('change', function () {
-        var chip = this.closest('.section-chip');
-        if (!chip) return;
-        var active = this.value === 'Active';
-        chip.classList.toggle('is-active', active);
-        chip.classList.toggle('is-inactive', !active);
-        this.classList.toggle('section-chip-status-active', active);
-        this.classList.toggle('section-chip-status-inactive', !active);
-    });
-});
+<div class="fs-modal" id="classEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-class-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="classEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-school"></i></div>
+            <div>
+                <h3 id="classEditModalTitle">Edit Class</h3>
+                <p>Update class name, sort order and status</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-class-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_class">
+            <input type="hidden" name="id" id="classEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="classEditName">Class Name</label><input type="text" name="name" id="classEditName" class="form-input" required></div>
+                <div class="form-field"><label for="classEditSort">Sort Order</label><input type="number" name="sort_order" id="classEditSort" class="form-input" min="0"></div>
+                <div class="form-field"><label for="classEditStatus">Status</label>
+                    <select name="status" id="classEditStatus" class="form-input form-select">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                    </select>
+                </div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-class-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
 
-document.querySelectorAll('.section-chip-input').forEach(function (input) {
-    input.addEventListener('input', function () {
-        var badge = this.closest('.section-chip') && this.closest('.section-chip').querySelector('.section-chip-badge');
-        if (badge) {
-            badge.textContent = this.value.trim().toUpperCase() || '?';
+<div class="fs-modal" id="sectionEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-section-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="sectionEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-table-columns"></i></div>
+            <div>
+                <h3 id="sectionEditModalTitle">Edit Section</h3>
+                <p>Update section name and status</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-section-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_section">
+            <input type="hidden" name="id" id="sectionEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="sectionEditName">Section Name</label><input type="text" name="name" id="sectionEditName" class="form-input" maxlength="10" required></div>
+                <div class="form-field"><label for="sectionEditStatus">Status</label>
+                    <select name="status" id="sectionEditStatus" class="form-input form-select">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                    </select>
+                </div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-section-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    function wire(modalId, openSel, closeSel, fill, focusId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+        function open() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('fs-modal-open');
+            var el = document.getElementById(focusId);
+            if (el) setTimeout(function () { el.focus(); if (el.select) el.select(); }, 120);
         }
-    });
+        function close() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            if (!document.querySelector('.fs-modal.is-open')) document.body.classList.remove('fs-modal-open');
+        }
+        document.querySelectorAll(openSel).forEach(function (btn) {
+            btn.addEventListener('click', function () { fill(btn); open(); });
+        });
+        modal.querySelectorAll(closeSel).forEach(function (el) { el.addEventListener('click', close); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) close();
+        });
+    }
+    wire('classEditModal', '[data-erp-edit-class]', '[data-class-modal-close]', function (btn) {
+        document.getElementById('classEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('classEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('classEditSort').value = btn.getAttribute('data-sort') || '0';
+        document.getElementById('classEditStatus').value = btn.getAttribute('data-status') || 'Active';
+    }, 'classEditName');
+    wire('sectionEditModal', '[data-erp-edit-section]', '[data-section-modal-close]', function (btn) {
+        document.getElementById('sectionEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('sectionEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('sectionEditStatus').value = btn.getAttribute('data-status') || 'Active';
+    }, 'sectionEditName');
 });
 </script>
 

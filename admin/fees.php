@@ -66,6 +66,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['success_msg'] = 'Monthly fee structure saved for ' . $className;
             $redirectClass = $className;
         }
+    } elseif ($action === 'save_fee_policy') {
+        require_once 'includes/settings_helpers.php';
+        saveFeePolicySettings($pdo, [
+            'late_fee_amount' => $_POST['late_fee_amount'] ?? 0,
+            'late_fee_after_day' => $_POST['late_fee_after_day'] ?? 0,
+            'default_waiver_percent' => $_POST['default_waiver_percent'] ?? 0,
+        ]);
+        setSetting($pdo, 'library_fine_per_day', (string) max(0, (float) ($_POST['library_fine_per_day'] ?? 5)));
+        $_SESSION['success_msg'] = 'Fee policy saved.';
     }
     header('Location: fees.php' . ($redirectClass !== '' ? '?class=' . urlencode($redirectClass) : ''));
     exit;
@@ -136,6 +145,9 @@ function feeHeadStructureTotal(array $head, array $amountMap, array $feeMonthOrd
 
 $selectedClass = trim($_GET['class'] ?? '');
 require_once 'includes/header.php';
+require_once 'includes/settings_helpers.php';
+$feePolicy = getFeePolicySettings($pdo);
+$libraryFinePerDay = (float) getSetting($pdo, 'library_fine_per_day', '5');
 $heads = getFeeHeads($pdo);
 $amountMap = $selectedClass ? getClassFeeAmountMap($pdo, $selectedClass) : [];
 $classSummaries = getClassFeeStructureSummaries($pdo, $sessionId);
@@ -207,6 +219,21 @@ foreach ($feeMonthOrder as $idx => $m) {
     <?php if (moduleEnabled($pdo, 'transport')): ?>
     <a href="transport.php" class="fs-quick-link"><i class="fas fa-bus"></i><span>Transport Routes</span></a>
     <?php endif; ?>
+</div>
+
+<div class="form-section-card section-mb">
+    <div class="section-card-header">
+        <div class="section-card-icon section-icon-school"><i class="fas fa-percentage"></i></div>
+        <div><h4>Late fee &amp; waiver policy</h4><p>Category discounts are set under Students → Categories. Default waiver applies when category has no discount.</p></div>
+    </div>
+    <form method="POST" class="form-grid form-grid-4 form-grid-spaced">
+        <input type="hidden" name="action" value="save_fee_policy">
+        <div class="form-field"><label>Late fee amount (₹)</label><input type="number" step="0.01" min="0" name="late_fee_amount" class="form-input" value="<?php echo htmlspecialchars((string) $feePolicy['late_fee_amount']); ?>"></div>
+        <div class="form-field"><label>Charge after day of month</label><input type="number" min="0" max="28" name="late_fee_after_day" class="form-input" value="<?php echo (int) $feePolicy['late_fee_after_day']; ?>"><small class="muted">0 = disabled</small></div>
+        <div class="form-field"><label>Default waiver %</label><input type="number" step="0.01" min="0" max="100" name="default_waiver_percent" class="form-input" value="<?php echo htmlspecialchars((string) $feePolicy['default_waiver_percent']); ?>"></div>
+        <div class="form-field"><label>Library fine / day (₹)</label><input type="number" step="0.01" min="0" name="library_fine_per_day" class="form-input" value="<?php echo htmlspecialchars((string) $libraryFinePerDay); ?>"></div>
+        <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save Policy</button></div>
+    </form>
 </div>
 
 <div class="fs-layout">

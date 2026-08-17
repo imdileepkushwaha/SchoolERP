@@ -21,6 +21,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['enable_portal'])) {
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['disable_portal'])) {
+    $id = (int) $_POST['student_id'];
+    disableStudentPortal($pdo, $id);
+    $_SESSION['success_msg'] = 'Portal access disabled.';
+    header('Location: portal_accounts.php');
+    exit;
+}
+
 require_once 'includes/header.php';
 $enabled = $pdo->query("SELECT id, ad_no, name, class, portal_enabled FROM students WHERE portal_enabled = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $totalActive = (int) $pdo->query("SELECT COUNT(*) FROM students WHERE status='Active'")->fetchColumn();
@@ -101,11 +109,23 @@ if ($search !== '') {
 <div class="table-container">
     <div class="table-toolbar"><strong>Portal Enabled (<?php echo count($enabled); ?>)</strong></div>
     <div class="table-wrapper">
-        <table><thead><tr><th>Adm No</th><th>Name</th><th>Class</th><th>Status</th></tr></thead><tbody>
+        <table><thead><tr><th>Adm No</th><th>Name</th><th>Class</th><th>Status</th><th>Action</th></tr></thead><tbody>
         <?php if ($enabled): foreach ($enabled as $e): ?>
-        <tr><td><strong><?php echo htmlspecialchars($e['ad_no']); ?></strong></td><td><?php echo htmlspecialchars($e['name']); ?></td><td><?php echo htmlspecialchars($e['class']); ?></td><td><span class="status-badge badge-active">Active</span></td></tr>
+        <tr>
+            <td><strong><?php echo htmlspecialchars($e['ad_no']); ?></strong></td>
+            <td><?php echo htmlspecialchars($e['name']); ?></td>
+            <td><?php echo htmlspecialchars($e['class']); ?></td>
+            <td><span class="status-badge badge-active">Active</span></td>
+            <td>
+                <form method="POST" onsubmit="return confirm('Disable portal access for this student?');">
+                    <input type="hidden" name="disable_portal" value="1">
+                    <input type="hidden" name="student_id" value="<?php echo (int) $e['id']; ?>">
+                    <button type="submit" class="action-btn delete-btn" title="Disable portal"><i class="fas fa-ban"></i></button>
+                </form>
+            </td>
+        </tr>
         <?php endforeach; else: ?>
-        <tr><td colspan="4" class="table-empty-cell">No students have portal access yet.</td></tr>
+        <tr><td colspan="5" class="table-empty-cell">No students have portal access yet.</td></tr>
         <?php endif; ?>
         </tbody></table>
     </div>

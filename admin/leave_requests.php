@@ -78,12 +78,6 @@ foreach ($teachers as $t) {
 }
 
 $filterStatus = $_GET['status'] ?? 'all';
-$editId = (int) ($_GET['edit'] ?? 0);
-$editLeave = $editId ? getLeaveRequestById($pdo, $editId) : null;
-if ($editLeave && !adminCanEditLeave($editLeave)) {
-    $editLeave = null;
-    $editId = 0;
-}
 
 $leaves = $pdo->query("SELECT * FROM leave_requests ORDER BY created_at DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -156,24 +150,21 @@ $today = date('Y-m-d');
     <div class="alr-form-col">
         <div class="form-section-card alr-form-card">
             <div class="section-card-header">
-                <div class="section-card-icon section-icon-school"><i class="fas fa-<?php echo $editLeave ? 'edit' : 'plus'; ?>"></i></div>
+                <div class="section-card-icon section-icon-school"><i class="fas fa-plus"></i></div>
                 <div>
-                    <h4><?php echo $editLeave ? 'Edit Admin Leave' : 'Add Leave (Admin)'; ?></h4>
-                    <p class="alr-form-sub"><?php echo $editLeave ? 'Update dates, teacher, or reason for this admin entry.' : 'Record leave directly — marked as added by admin.'; ?></p>
+                    <h4>Add Leave (Admin)</h4>
+                    <p class="alr-form-sub">Record leave directly — marked as added by admin.</p>
                 </div>
             </div>
             <form method="POST" class="alr-form">
-                <input type="hidden" name="action" value="<?php echo $editLeave ? 'edit_leave' : 'add_leave'; ?>">
-                <?php if ($editLeave): ?>
-                <input type="hidden" name="leave_id" value="<?php echo (int) $editLeave['id']; ?>">
-                <?php endif; ?>
+                <input type="hidden" name="action" value="add_leave">
                 <input type="hidden" name="person_type" value="Teacher">
                 <div class="form-grid form-grid-2 form-grid-spaced">
                     <div class="form-field form-field-full">
                         <label><i class="fas fa-user"></i> Teacher</label>
                         <select name="person_id" class="form-input form-select" required>
                             <?php foreach ($teachers as $t): ?>
-                            <option value="<?php echo $t['id']; ?>" <?php echo ($editLeave && (int) $editLeave['person_id'] === (int) $t['id']) ? 'selected' : ''; ?>>
+                            <option value="<?php echo $t['id']; ?>">
                                 <?php echo htmlspecialchars($t['name'] . ' (' . $t['employee_id'] . ')'); ?>
                             </option>
                             <?php endforeach; ?>
@@ -181,24 +172,20 @@ $today = date('Y-m-d');
                     </div>
                     <div class="form-field">
                         <label><i class="fas fa-calendar-alt"></i> From Date</label>
-                        <input type="date" name="from_date" class="form-input" required value="<?php echo $editLeave ? htmlspecialchars($editLeave['from_date']) : ''; ?>">
+                        <input type="date" name="from_date" class="form-input" required>
                     </div>
                     <div class="form-field">
                         <label><i class="fas fa-calendar-alt"></i> To Date</label>
-                        <input type="date" name="to_date" class="form-input" required value="<?php echo $editLeave ? htmlspecialchars($editLeave['to_date']) : ''; ?>">
+                        <input type="date" name="to_date" class="form-input" required>
                     </div>
                     <div class="form-field form-field-full">
                         <label><i class="fas fa-comment"></i> Reason</label>
-                        <input type="text" name="reason" class="form-input" placeholder="Optional reason" value="<?php echo $editLeave ? htmlspecialchars($editLeave['reason'] ?? '') : ''; ?>">
+                        <input type="text" name="reason" class="form-input" placeholder="Optional reason">
                     </div>
                 </div>
                 <div class="alr-form-actions">
-                    <?php if ($editLeave): ?>
-                    <a href="leave_requests.php<?php echo $filterStatus !== 'all' ? '?status=' . urlencode($filterStatus) : ''; ?>" class="btn-header-action btn-header-outline">Cancel Edit</a>
-                    <?php endif; ?>
                     <button type="submit" class="btn-header-action btn-header-primary">
-                        <i class="fas fa-<?php echo $editLeave ? 'save' : 'plus'; ?>"></i>
-                        <?php echo $editLeave ? 'Save Changes' : 'Add Leave'; ?>
+                        <i class="fas fa-plus"></i> Add Leave
                     </button>
                 </div>
             </form>
@@ -302,7 +289,15 @@ $today = date('Y-m-d');
                             </form>
                             <?php endif; ?>
                             <?php if ($canEdit): ?>
-                            <a href="leave_requests.php?edit=<?php echo (int) $l['id']; ?><?php echo $filterStatus !== 'all' ? '&status=' . urlencode($filterStatus) : ''; ?>" class="alr-action-btn is-edit"><i class="fas fa-edit"></i> Edit</a>
+                            <button type="button" class="action-btn edit-btn" title="Edit"
+                                data-erp-edit-leave
+                                data-id="<?php echo (int) $l['id']; ?>"
+                                data-person="<?php echo (int) $l['person_id']; ?>"
+                                data-from="<?php echo htmlspecialchars($l['from_date'], ENT_QUOTES); ?>"
+                                data-to="<?php echo htmlspecialchars($l['to_date'], ENT_QUOTES); ?>"
+                                data-reason="<?php echo htmlspecialchars($l['reason'] ?? '', ENT_QUOTES); ?>">
+                                <i class="fas fa-pen"></i>
+                            </button>
                             <?php endif; ?>
                             <?php if ($canCancel): ?>
                             <form method="POST" class="alr-inline-form" onsubmit="return confirm('Cancel this leave request?');">
@@ -327,4 +322,76 @@ $today = date('Y-m-d');
     </div>
 </div>
 
+<div class="fs-modal" id="leaveEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-leave-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="leaveEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-calendar-check"></i></div>
+            <div>
+                <h3 id="leaveEditModalTitle">Edit Admin Leave</h3>
+                <p>Update teacher, dates or reason</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-leave-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="edit_leave">
+            <input type="hidden" name="leave_id" id="leaveEditId" value="">
+            <input type="hidden" name="person_type" value="Teacher">
+            <div class="fs-modal-body">
+                <div class="form-field">
+                    <label for="leaveEditPerson">Teacher</label>
+                    <select name="person_id" id="leaveEditPerson" class="form-input form-select" required>
+                        <?php foreach ($teachers as $t): ?>
+                        <option value="<?php echo $t['id']; ?>"><?php echo htmlspecialchars($t['name'] . ' (' . $t['employee_id'] . ')'); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label for="leaveEditFrom">From Date</label><input type="date" name="from_date" id="leaveEditFrom" class="form-input" required></div>
+                <div class="form-field"><label for="leaveEditTo">To Date</label><input type="date" name="to_date" id="leaveEditTo" class="form-input" required></div>
+                <div class="form-field"><label for="leaveEditReason">Reason</label><input type="text" name="reason" id="leaveEditReason" class="form-input" placeholder="Optional reason"></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-leave-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var modal = document.getElementById('leaveEditModal');
+    if (!modal) return;
+    if (modal.parentElement !== document.body) document.body.appendChild(modal);
+    function openModal() {
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('fs-modal-open');
+        setTimeout(function () {
+            var el = document.getElementById('leaveEditPerson');
+            if (el) el.focus();
+        }, 120);
+    }
+    function closeModal() {
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('fs-modal-open');
+    }
+    document.querySelectorAll('[data-erp-edit-leave]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.getElementById('leaveEditId').value = btn.getAttribute('data-id') || '';
+            document.getElementById('leaveEditPerson').value = btn.getAttribute('data-person') || '';
+            document.getElementById('leaveEditFrom').value = btn.getAttribute('data-from') || '';
+            document.getElementById('leaveEditTo').value = btn.getAttribute('data-to') || '';
+            document.getElementById('leaveEditReason').value = btn.getAttribute('data-reason') || '';
+            openModal();
+        });
+    });
+    modal.querySelectorAll('[data-leave-modal-close]').forEach(function (el) {
+        el.addEventListener('click', closeModal);
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
+    });
+});
+</script>
 <?php require_once 'includes/footer.php'; ?>

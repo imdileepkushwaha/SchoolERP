@@ -71,8 +71,17 @@ $newCount = count(array_filter($enquiries, fn($e) => $e['status'] === 'New'));
 <div class="table-container">
     <div class="table-toolbar"><strong>All Enquiries</strong></div>
     <div class="table-wrapper">
-        <table><thead><tr><th>Date</th><th>Student</th><th>Parent</th><th>Mobile</th><th>Class</th><th>Status</th><th></th></tr></thead><tbody>
-        <?php foreach ($enquiries as $e): ?>
+        <table><thead><tr><th>Date</th><th>Student</th><th>Parent</th><th>Mobile</th><th>Class</th><th>Status</th><th>Action</th></tr></thead><tbody>
+        <?php foreach ($enquiries as $e):
+            $admitQs = http_build_query([
+                'enquiry_id' => $e['id'],
+                'name' => $e['student_name'] ?? '',
+                'parent_name' => $e['parent_name'] ?? '',
+                'mobile' => $e['mobile'] ?? '',
+                'email' => $e['email'] ?? '',
+                'class' => $e['class_sought'] ?? '',
+            ]);
+        ?>
         <tr>
             <td><?php echo date('d M Y', strtotime($e['created_at'])); ?></td>
             <td><strong><?php echo htmlspecialchars($e['student_name']); ?></strong></td>
@@ -81,10 +90,20 @@ $newCount = count(array_filter($enquiries, fn($e) => $e['status'] === 'New'));
             <td><?php echo displayVal($e['class_sought']); ?></td>
             <td><span class="status-badge <?php echo $e['status'] === 'Converted' ? 'badge-active' : 'badge-inactive'; ?>"><?php echo $e['status']; ?></span></td>
             <td>
-                <form method="POST" style="display:inline"><input type="hidden" name="action" value="update_status"><input type="hidden" name="id" value="<?php echo $e['id']; ?>">
-                <select name="status" class="form-input form-select" style="padding:4px 8px;font-size:0.8rem" onchange="this.form.submit()">
-                    <?php foreach (['New','Contacted','Converted','Closed'] as $st): ?><option <?php echo $e['status']===$st?'selected':''; ?>><?php echo $st; ?></option><?php endforeach; ?>
-                </select></form>
+                <div class="table-action-btns">
+                    <form method="POST" style="display:inline"><input type="hidden" name="action" value="update_status"><input type="hidden" name="id" value="<?php echo $e['id']; ?>">
+                    <select name="status" class="form-input form-select" style="padding:4px 8px;font-size:0.8rem" onchange="this.form.submit()">
+                        <?php foreach (['New','Contacted','Converted','Closed'] as $st): ?><option <?php echo $e['status']===$st?'selected':''; ?>><?php echo $st; ?></option><?php endforeach; ?>
+                    </select></form>
+                    <?php if ($e['status'] !== 'Converted'): ?>
+                    <a href="student_add.php?<?php echo htmlspecialchars($admitQs); ?>" class="btn-header-action btn-header-primary btn-sm" title="Admit as student"><i class="fas fa-user-plus"></i> Admit</a>
+                    <?php endif; ?>
+                    <form method="POST" style="display:inline" onsubmit="return confirm('Delete this enquiry?');">
+                        <input type="hidden" name="action" value="delete_enquiry">
+                        <input type="hidden" name="id" value="<?php echo (int) $e['id']; ?>">
+                        <button type="submit" class="action-btn delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
+                    </form>
+                </div>
             </td>
         </tr>
         <?php endforeach; ?>

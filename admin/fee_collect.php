@@ -39,6 +39,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['fix_payment_month']) 
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['void_payment']) && $student) {
+    $paymentId = (int) ($_POST['payment_id'] ?? 0);
+    if ($paymentId > 0 && voidFeePayment($pdo, $paymentId, $studentId)) {
+        $_SESSION['success_msg'] = 'Payment voided. Balance updated.';
+    } else {
+        $_SESSION['error_msg'] = 'Could not void payment.';
+    }
+    header('Location: fee_collect.php?student_id=' . $studentId);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['collect_fee']) && $student) {
     $amount = (float) ($_POST['amount'] ?? 0);
     $headId = (int) ($_POST['fee_head_id'] ?? 0) ?: null;
@@ -614,21 +625,23 @@ $sectionOptions = $filterClass !== '' ? getSectionOptions($pdo, $filterClass) : 
     </div>
     <div class="table-wrapper">
         <table class="fc-history-table">
-            <thead><tr><th>Date</th><th>Month</th><th>Receipt</th><th>Fee Head</th><th>Amount</th><th>Method</th><th></th><th>Fix Month</th></tr></thead>
+            <thead><tr><th>Date</th><th>Month</th><th>Receipt</th><th>Fee Head</th><th>Amount</th><th>Method</th><th></th><th>Fix Month</th><th></th></tr></thead>
             <tbody>
             <?php foreach ($feeSummary['payments'] as $p):
                 $payMonth = paymentRecordFeeMonth($p);
                 $payMonthLabel = $payMonth ? ($monthLabels[$payMonth] ?? $payMonth) : '—';
+                $isVoided = ($p['status'] ?? 'Active') === 'Voided';
             ?>
-            <tr>
+            <tr<?php echo $isVoided ? ' style="opacity:.55"' : ''; ?>>
                 <td><span class="fc-date-cell"><i class="fas fa-calendar"></i> <?php echo date('d M Y', strtotime($p['payment_date'])); ?></span></td>
                 <td><span class="fc-month-cell"><?php echo htmlspecialchars($payMonthLabel); ?></span></td>
                 <td><code class="fc-receipt-code"><?php echo htmlspecialchars($p['receipt_no']); ?></code></td>
                 <td><?php echo displayVal($p['head_name'], 'General'); ?></td>
-                <td><strong class="fc-amount-cell">₹<?php echo number_format($p['amount'], 2); ?></strong></td>
+                <td><strong class="fc-amount-cell">₹<?php echo number_format($p['amount'], 2); ?></strong><?php echo $isVoided ? ' <span class="status-badge badge-inactive">Voided</span>' : ''; ?></td>
                 <td><span class="fc-method-badge fc-method-<?php echo strtolower(preg_replace('/\s+/', '-', $p['payment_method'])); ?>"><?php echo htmlspecialchars($p['payment_method']); ?></span></td>
-                <td><a href="fee_receipt.php?id=<?php echo $p['id']; ?>" class="fc-receipt-link" target="_blank"><i class="fas fa-print"></i> Receipt</a></td>
+                <td><?php if (!$isVoided): ?><a href="fee_receipt.php?id=<?php echo $p['id']; ?>" class="fc-receipt-link" target="_blank"><i class="fas fa-print"></i> Receipt</a><?php else: ?>—<?php endif; ?></td>
                 <td class="fc-fix-month-cell">
+                    <?php if (!$isVoided): ?>
                     <form method="POST" class="fc-fix-month-form" action="fee_collect.php?student_id=<?php echo (int) $studentId; ?>">
                         <input type="hidden" name="fix_payment_month" value="1">
                         <input type="hidden" name="student_id" value="<?php echo (int) $studentId; ?>">
@@ -640,6 +653,17 @@ $sectionOptions = $filterClass !== '' ? getSectionOptions($pdo, $filterClass) : 
                         </select>
                         <button type="submit" class="fc-fix-month-btn" title="Update fee month"><i class="fas fa-check"></i></button>
                     </form>
+                    <?php else: ?>—<?php endif; ?>
+                </td>
+                <td>
+                    <?php if (!$isVoided): ?>
+                    <form method="POST" action="fee_collect.php?student_id=<?php echo (int) $studentId; ?>" onsubmit="return confirm('Void this payment? This cannot be undone easily.');">
+                        <input type="hidden" name="void_payment" value="1">
+                        <input type="hidden" name="student_id" value="<?php echo (int) $studentId; ?>">
+                        <input type="hidden" name="payment_id" value="<?php echo (int) $p['id']; ?>">
+                        <button type="submit" class="action-btn delete-btn" title="Void payment"><i class="fas fa-ban"></i></button>
+                    </form>
+                    <?php endif; ?>
                 </td>
             </tr>
             <?php endforeach; ?>

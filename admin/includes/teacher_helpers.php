@@ -386,6 +386,13 @@ function enableAllTeachersPortal($pdo) {
     return count($ids);
 }
 
+function disableTeacherPortal($pdo, $teacherId): bool {
+    ensureTeacherSchema($pdo);
+    $stmt = $pdo->prepare("UPDATE teachers SET portal_enabled = 0 WHERE id = ?");
+    $stmt->execute([(int) $teacherId]);
+    return true;
+}
+
 function teacherMustChangePassword($teacher) {
     return !empty($teacher['portal_must_change']);
 }

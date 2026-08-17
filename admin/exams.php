@@ -36,6 +36,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (int) $_POST['id'],
             ]);
         $_SESSION['success_msg'] = 'Exam updated.';
+    } elseif ($action === 'update_exam_subject' && isset($_POST['id'])) {
+        $pdo->prepare('UPDATE exam_subjects SET subject_name=?, max_marks=? WHERE id=?')
+            ->execute([
+                trim($_POST['subject_name'] ?? ''),
+                (int) ($_POST['max_marks'] ?? 100),
+                (int) $_POST['id'],
+            ]);
+        $_SESSION['success_msg'] = 'Subject updated.';
     } elseif ($action === 'delete_subject' && isset($_POST['id'])) {
         $subId = (int) $_POST['id'];
         $pdo->prepare('DELETE FROM student_marks WHERE exam_subject_id = ?')->execute([$subId]);
@@ -208,6 +216,16 @@ foreach ($exams as $e) {
             <div class="exm-exam-actions">
                 <a href="marks.php?exam_id=<?php echo (int) $e['id']; ?>" class="exm-action-btn is-primary"><i class="fas fa-pen"></i> Enter Marks</a>
                 <a href="exam_analytics.php?exam_id=<?php echo (int) $e['id']; ?>" class="exm-action-btn"><i class="fas fa-chart-bar"></i> Analytics</a>
+                <button type="button" class="action-btn edit-btn" title="Edit"
+                    data-erp-edit-exam
+                    data-id="<?php echo (int) $e['id']; ?>"
+                    data-name="<?php echo htmlspecialchars($e['name'], ENT_QUOTES); ?>"
+                    data-type="<?php echo htmlspecialchars($e['exam_type'] ?? 'Term', ENT_QUOTES); ?>"
+                    data-class="<?php echo htmlspecialchars($e['class_name'], ENT_QUOTES); ?>"
+                    data-start="<?php echo htmlspecialchars($e['start_date'] ?? '', ENT_QUOTES); ?>"
+                    data-end="<?php echo htmlspecialchars($e['end_date'] ?? '', ENT_QUOTES); ?>">
+                    <i class="fas fa-pen"></i>
+                </button>
                 <form method="POST" style="margin:0" onsubmit="return confirm('Delete this exam, its subjects and all marks?');">
                     <input type="hidden" name="action" value="delete_exam">
                     <input type="hidden" name="id" value="<?php echo (int) $e['id']; ?>">
@@ -216,44 +234,25 @@ foreach ($exams as $e) {
             </div>
         </div>
 
-        <details class="erp-vehicle-edit" style="margin:0 0 14px">
-            <summary><i class="fas fa-pen"></i> Edit exam details</summary>
-            <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:10px">
-                <input type="hidden" name="action" value="update_exam">
-                <input type="hidden" name="id" value="<?php echo (int) $e['id']; ?>">
-                <div class="form-field"><label>Exam Name</label><input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($e['name']); ?>" required></div>
-                <div class="form-field"><label>Exam Type</label>
-                    <select name="exam_type" class="form-input form-select">
-                        <?php foreach (['Term', 'Unit Test', 'Annual', 'Pre-Board'] as $t): ?>
-                        <option value="<?php echo $t; ?>" <?php echo ($e['exam_type'] ?? '') === $t ? 'selected' : ''; ?>><?php echo $t; ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-field"><label>Class</label>
-                    <select name="class_name" class="form-input form-select" required>
-                        <?php foreach ($class_options as $c): ?>
-                        <option value="<?php echo htmlspecialchars($c); ?>" <?php echo $e['class_name'] === $c ? 'selected' : ''; ?>><?php echo htmlspecialchars($c); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-field"><label>Start Date</label><input type="date" name="start_date" class="form-input" value="<?php echo htmlspecialchars($e['start_date'] ?? ''); ?>"></div>
-                <div class="form-field"><label>End Date</label><input type="date" name="end_date" class="form-input" value="<?php echo htmlspecialchars($e['end_date'] ?? ''); ?>"></div>
-                <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save Exam</button></div>
-            </form>
-        </details>
-
         <div class="exm-subjects-section">
             <p class="exm-subjects-label">Subjects &amp; max marks</p>
             <?php if ($subjects): ?>
             <div class="exm-subject-chips">
                 <?php foreach ($subjects as $sub): ?>
-                <span class="exm-subject-chip">
+                <span class="exm-subject-chip" style="border-radius:12px">
                     <?php echo htmlspecialchars($sub['subject_name']); ?>
                     <em>/ <?php echo (int) $sub['max_marks']; ?></em>
+                    <button type="button" class="action-btn" title="Edit subject" style="width:22px;height:22px;margin-left:4px"
+                        data-erp-edit-exam-sub
+                        data-id="<?php echo (int) $sub['id']; ?>"
+                        data-name="<?php echo htmlspecialchars($sub['subject_name'], ENT_QUOTES); ?>"
+                        data-max="<?php echo (int) $sub['max_marks']; ?>">
+                        <i class="fas fa-pen"></i>
+                    </button>
                     <form method="POST" style="display:inline;margin:0" onsubmit="return confirm('Delete this subject and its marks?');">
                         <input type="hidden" name="action" value="delete_subject">
                         <input type="hidden" name="id" value="<?php echo (int) $sub['id']; ?>">
-                        <button type="submit" class="action-btn delete-btn" title="Delete subject" style="width:22px;height:22px;margin-left:4px"><i class="fas fa-times"></i></button>
+                        <button type="submit" class="action-btn delete-btn" title="Delete subject" style="width:22px;height:22px;margin-left:2px"><i class="fas fa-times"></i></button>
                     </form>
                 </span>
                 <?php endforeach; ?>
@@ -281,4 +280,113 @@ foreach ($exams as $e) {
 </div>
 <?php endif; ?>
 
+<div class="fs-modal" id="examEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-exam-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="examEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-clipboard-list"></i></div>
+            <div>
+                <h3 id="examEditModalTitle">Edit Exam</h3>
+                <p>Update exam name, type, class and dates</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-exam-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_exam">
+            <input type="hidden" name="id" id="examEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="examEditName">Exam Name</label><input type="text" name="name" id="examEditName" class="form-input" required></div>
+                <div class="form-field"><label for="examEditType">Exam Type</label>
+                    <select name="exam_type" id="examEditType" class="form-input form-select">
+                        <?php foreach (['Term', 'Unit Test', 'Annual', 'Pre-Board'] as $t): ?>
+                        <option value="<?php echo $t; ?>"><?php echo $t; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label for="examEditClass">Class</label>
+                    <select name="class_name" id="examEditClass" class="form-input form-select" required>
+                        <?php foreach ($class_options as $c): ?>
+                        <option value="<?php echo htmlspecialchars($c); ?>"><?php echo htmlspecialchars($c); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label for="examEditStart">Start Date</label><input type="date" name="start_date" id="examEditStart" class="form-input"></div>
+                <div class="form-field"><label for="examEditEnd">End Date</label><input type="date" name="end_date" id="examEditEnd" class="form-input"></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-exam-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="fs-modal" id="examSubEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-exam-sub-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="examSubEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-book"></i></div>
+            <div>
+                <h3 id="examSubEditModalTitle">Edit Exam Subject</h3>
+                <p>Update subject name and max marks</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-exam-sub-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_exam_subject">
+            <input type="hidden" name="id" id="examSubEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="examSubEditName">Subject Name</label><input type="text" name="subject_name" id="examSubEditName" class="form-input" required></div>
+                <div class="form-field"><label for="examSubEditMax">Max Marks</label><input type="number" name="max_marks" id="examSubEditMax" class="form-input" min="1" max="1000" required></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-exam-sub-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    function wireModal(modalId, openAttr, closeAttr, fillFn, focusId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+        function openModal() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('fs-modal-open');
+            var focusEl = document.getElementById(focusId);
+            if (focusEl) setTimeout(function () { focusEl.focus(); if (focusEl.select) focusEl.select(); }, 120);
+        }
+        function closeModal() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            if (!document.querySelector('.fs-modal.is-open')) document.body.classList.remove('fs-modal-open');
+        }
+        document.querySelectorAll('[' + openAttr + ']').forEach(function (btn) {
+            btn.addEventListener('click', function () { fillFn(btn); openModal(); });
+        });
+        modal.querySelectorAll('[' + closeAttr + ']').forEach(function (el) {
+            el.addEventListener('click', closeModal);
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
+        });
+    }
+    wireModal('examEditModal', 'data-erp-edit-exam', 'data-exam-modal-close', function (btn) {
+        document.getElementById('examEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('examEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('examEditType').value = btn.getAttribute('data-type') || 'Term';
+        document.getElementById('examEditClass').value = btn.getAttribute('data-class') || '';
+        document.getElementById('examEditStart').value = btn.getAttribute('data-start') || '';
+        document.getElementById('examEditEnd').value = btn.getAttribute('data-end') || '';
+    }, 'examEditName');
+    wireModal('examSubEditModal', 'data-erp-edit-exam-sub', 'data-exam-sub-modal-close', function (btn) {
+        document.getElementById('examSubEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('examSubEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('examSubEditMax').value = btn.getAttribute('data-max') || '100';
+    }, 'examSubEditName');
+});
+</script>
 <?php require_once 'includes/footer.php'; ?>

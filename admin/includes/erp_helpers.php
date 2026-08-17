@@ -100,6 +100,7 @@ function ensureErpSchema($pdo) {
 
     ensureFeePaymentsFeeMonthColumn($pdo);
     migrateFeeMonthFromPaymentRemarks($pdo);
+    ensureFeePaymentsStatusColumn($pdo);
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS `exams` (
         `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -442,6 +443,135 @@ function ensureFeePaymentsFeeMonthColumn($pdo) {
         }
     }
     return feePaymentsHasFeeMonthColumn($pdo);
+}
+
+function feePaymentsHasStatusColumn($pdo, bool $reset = false): bool {
+    static $has = null;
+    if ($reset) {
+        $has = null;
+    }
+    if ($has !== null) {
+        return $has;
+    }
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM fee_payments LIKE 'status'")->fetchAll();
+        $has = !empty($cols);
+    } catch (PDOException $e) {
+        $has = false;
+    }
+    return $has;
+}
+
+function ensureFeePaymentsStatusColumn($pdo): bool {
+    if (feePaymentsHasStatusColumn($pdo)) {
+        return true;
+    }
+    try {
+        $pdo->exec("ALTER TABLE `fee_payments` ADD COLUMN `status` enum('Active','Voided') NOT NULL DEFAULT 'Active' AFTER `remarks`");
+        return feePaymentsHasStatusColumn($pdo, true);
+    } catch (PDOException $e) {
+        return false;
+    }
+}
+
+function voidFeePayment($pdo, int $paymentId, int $studentId = 0): bool {
+    ensureFeePaymentsStatusColumn($pdo);
+    if ($studentId > 0) {
+        $stmt = $pdo->prepare("UPDATE fee_payments SET status = 'Voided' WHERE id = ? AND student_id = ? AND IFNULL(status,'Active') = 'Active'");
+        $stmt->execute([$paymentId, $studentId]);
+    } else {
+        $stmt = $pdo->prepare("UPDATE fee_payments SET status = 'Voided' WHERE id = ? AND IFNULL(status,'Active') = 'Active'");
+        $stmt->execute([$paymentId]);
+    }
+    return $stmt->rowCount() > 0;
+}
+
+function getFeePolicySettings($pdo): array {
+    if (!function_exists('getSetting')) {
+        require_once __DIR__ . '/settings_helpers.php';
+    }
+    return [
+        'late_fee_amount' => (float) getSetting($pdo, 'fee_late_fee_amount', '0'),
+        'late_fee_after_day' => max(0, min(28, (int) getSetting($pdo, 'fee_late_fee_after_day', '0'))),
+        'default_waiver_percent' => max(0, min(100, (float) getSetting($pdo, 'fee_default_waiver_percent', '0'))),
+    ];
+}
+
+function saveFeePolicySettings($pdo, array $data): void {
+    if (!function_exists('setSetting')) {
+        require_once __DIR__ . '/settings_helpers.php';
+    }
+    setSetting($pdo, 'fee_late_fee_amount', (string) max(0, (float) ($data['late_fee_amount'] ?? 0)));
+    setSetting($pdo, 'fee_late_fee_after_day', (string) max(0, min(28, (int) ($data['late_fee_after_day'] ?? 0))));
+    setSetting($pdo, 'fee_default_waiver_percent', (string) max(0, min(100, (float) ($data['default_waiver_percent'] ?? 0))));
+}
+
+function getStudentCategoryWaiverPercent($pdo, array $student): float {
+    $policy = getFeePolicySettings($pdo);
+    $pct = (float) $policy['default_waiver_percent'];
+    $catName = trim((string) ($student['category'] ?? ''));
+    if ($catName === '') {
+        return $pct;
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT discount_percent FROM student_categories WHERE name = ? AND status = 'Active' LIMIT 1");
+        $stmt->execute([$catName]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row && isset($row['discount_percent'])) {
+            return max(0, min(100, (float) $row['discount_percent']));
+        }
+    } catch (PDOException $e) {
+        // column may not exist yet
+    }
+    return $pct;
+}
+
+function getNotificationTemplates($pdo): array {
+    if (!function_exists('getSetting')) {
+        require_once __DIR__ . '/settings_helpers.php';
+    }
+    return [
+        'fee_reminder' => getSetting($pdo, 'tpl_fee_reminder', 'Dear Parent, fee balance of Rs.{balance} is due for {name} ({class}). - {school}'),
+        'attendance_alert' => getSetting($pdo, 'tpl_attendance_alert', 'Attendance Alert: {name} was marked {status} on {date}. - {school}'),
+        'birthday_wish' => getSetting($pdo, 'tpl_birthday_wish', 'Happy Birthday {name}! Wishing you a wonderful year ahead. - {school}'),
+    ];
+}
+
+function saveNotificationTemplates($pdo, array $data): void {
+    if (!function_exists('setSetting')) {
+        require_once __DIR__ . '/settings_helpers.php';
+    }
+    foreach (['fee_reminder', 'attendance_alert', 'birthday_wish'] as $key) {
+        if (isset($data[$key])) {
+            $val = trim((string) $data[$key]);
+            if ($val !== '') {
+                setSetting($pdo, 'tpl_' . $key, $val);
+            }
+        }
+    }
+}
+
+function renderNotificationTemplate($pdo, string $type, array $vars): string {
+    $templates = getNotificationTemplates($pdo);
+    $tpl = $templates[$type] ?? '';
+    if ($tpl === '') {
+        return '';
+    }
+    if (!isset($vars['school'])) {
+        $school = function_exists('getSchoolProfile') ? getSchoolProfile($pdo) : [];
+        $vars['school'] = $school['name'] ?? 'School';
+    }
+    $out = $tpl;
+    foreach ($vars as $k => $v) {
+        $out = str_replace('{' . $k . '}', (string) $v, $out);
+    }
+    return $out;
+}
+
+function disableStudentPortal($pdo, $studentId): bool {
+    $stmt = $pdo->prepare("UPDATE students SET portal_enabled = 0 WHERE id = ?");
+    $stmt->execute([(int) $studentId]);
+    return $stmt->rowCount() >= 0;
 }
 
 function feePaymentsHasFeeMonthColumn($pdo) {
@@ -1209,6 +1339,7 @@ function getStudentTransportDetails($pdo, $studentId) {
 }
 
 function getStudentFeeSummary($pdo, $studentId) {
+    ensureFeePaymentsStatusColumn($pdo);
     $student = $pdo->prepare("SELECT * FROM students WHERE id = ?");
     $student->execute([(int) $studentId]);
     $student = $student->fetch(PDO::FETCH_ASSOC);
@@ -1240,6 +1371,7 @@ function getStudentFeeSummary($pdo, $studentId) {
     $paymentsStmt = $pdo->prepare(
         "SELECT fp.id, fp.student_id, fp.fee_head_id, fp.amount, fp.payment_date,
                 fp.fee_month, fp.payment_method, fp.receipt_no, fp.session_id, fp.remarks, fp.created_at,
+                " . (feePaymentsHasStatusColumn($pdo) ? "fp.status," : "'Active' AS status,") . "
                 fh.name AS head_name
          FROM fee_payments fp
          LEFT JOIN fee_heads fh ON fh.id = fp.fee_head_id
@@ -1253,11 +1385,48 @@ function getStudentFeeSummary($pdo, $studentId) {
         if (feeHeadHiddenByModule($pdo, $payment['head_name'] ?? '')) {
             continue;
         }
+        if (($payment['status'] ?? 'Active') === 'Voided') {
+            $payments[] = $payment;
+            continue;
+        }
         $totalPaid += (float) $payment['amount'];
         $payments[] = $payment;
     }
-    $balance = max(0, $totalDue - $totalPaid);
-    if ($totalDue <= 0) {
+
+    $waiverPct = getStudentCategoryWaiverPercent($pdo, $student);
+    $waiverAmount = round($totalDue * ($waiverPct / 100), 2);
+    $dueAfterWaiver = max(0, $totalDue - $waiverAmount);
+
+    $policy = getFeePolicySettings($pdo);
+    $lateFee = 0.0;
+    if ($policy['late_fee_amount'] > 0 && $policy['late_fee_after_day'] > 0) {
+        $todayDay = (int) date('j');
+        $currentMonth = (int) date('n');
+        if ($todayDay > $policy['late_fee_after_day']) {
+            $monthPaid = 0.0;
+            foreach ($payments as $p) {
+                if (($p['status'] ?? 'Active') === 'Voided') {
+                    continue;
+                }
+                if (paymentRecordFeeMonth($p) === $currentMonth) {
+                    $monthPaid += (float) $p['amount'];
+                }
+            }
+            $monthDue = 0.0;
+            foreach ($applicableStructure as $row) {
+                if ((int) ($row['month'] ?? 0) === $currentMonth) {
+                    $monthDue += (float) $row['amount'];
+                }
+            }
+            $monthDue = round($monthDue * (1 - $waiverPct / 100), 2);
+            if ($monthDue > 0 && $monthPaid + 0.01 < $monthDue) {
+                $lateFee = (float) $policy['late_fee_amount'];
+            }
+        }
+    }
+    $dueAfterWaiver += $lateFee;
+    $balance = max(0, $dueAfterWaiver - $totalPaid);
+    if ($dueAfterWaiver <= 0 && $totalDue <= 0) {
         $feeStatus = 'no_structure';
     } elseif ($balance <= 0) {
         $feeStatus = 'cleared';
@@ -1266,7 +1435,11 @@ function getStudentFeeSummary($pdo, $studentId) {
     }
     return [
         'student' => $student,
-        'total_due' => $totalDue,
+        'total_due' => $dueAfterWaiver,
+        'base_due' => $totalDue,
+        'waiver_percent' => $waiverPct,
+        'waiver_amount' => $waiverAmount,
+        'late_fee' => $lateFee,
         'total_paid' => $totalPaid,
         'balance' => $balance,
         'fee_status' => $feeStatus,
@@ -1414,7 +1587,11 @@ function sendFeeReminders($pdo, $className = '') {
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $s) {
         $fee = getStudentFeeSummary($pdo, $s['id']);
         if ($fee && $fee['balance'] > 0 && !empty($s['mobile'])) {
-            $msg = "Dear Parent, fee balance of Rs.{$fee['balance']} is due for {$s['name']} ({$s['class']}). - EduDash";
+            $msg = renderNotificationTemplate($pdo, 'fee_reminder', [
+                'name' => $s['name'],
+                'class' => $s['class'],
+                'balance' => $fee['balance'],
+            ]);
             queueNotification($pdo, 'SMS', $s['mobile'], $msg, $s['id'], 'fee_reminder');
             queueNotification($pdo, 'WhatsApp', $s['mobile'], $msg, $s['id'], 'fee_reminder');
             $sent++;
@@ -1439,7 +1616,11 @@ function sendAttendanceAlerts($pdo, $date, $className = '') {
         if (empty($row['mobile'])) {
             continue;
         }
-        $msg = "Attendance Alert: {$row['name']} was marked {$row['status']} on {$date}. - EduDash";
+        $msg = renderNotificationTemplate($pdo, 'attendance_alert', [
+            'name' => $row['name'],
+            'status' => $row['status'],
+            'date' => $date,
+        ]);
         queueNotification($pdo, 'SMS', $row['mobile'], $msg, $row['id'], 'attendance_alert');
         queueNotification($pdo, 'WhatsApp', $row['mobile'], $msg, $row['id'], 'attendance_alert');
         $sent++;
@@ -1564,14 +1745,13 @@ function sendBirthdayWishes($pdo, string $date, string $audience = 'all', string
     $sent = 0;
     foreach (getBirthdayPeople($pdo, $date, $audience, $className) as $person) {
         $name = $person['name'];
-        if ($person['type'] === 'student') {
-            $classBit = $person['class'] !== '' ? " ({$person['class']})" : '';
-            $msg = "Dear Parent, Happy Birthday to {$name}{$classBit}! Warm wishes from {$school}.";
-            $studentId = $person['id'];
-        } else {
-            $msg = "Happy Birthday {$name}! Wishing you a wonderful year ahead. - {$school}";
-            $studentId = null;
-        }
+        $studentId = $person['type'] === 'student' ? $person['id'] : null;
+        $msg = renderNotificationTemplate($pdo, 'birthday_wish', [
+            'name' => $name,
+            'class' => $person['class'] ?? '',
+            'date' => $date,
+            'school' => $school,
+        ]);
 
         $delivered = false;
         if ($person['mobile'] !== '') {
@@ -1774,21 +1954,64 @@ function getExamClassAnalytics($pdo, $examId) {
         return null;
     }
     $students = getStudentsByClassSection($pdo, $exam['class_name']);
-    $subjects = $pdo->prepare("SELECT * FROM exam_subjects WHERE exam_id = ?");
+    $subjects = $pdo->prepare("SELECT * FROM exam_subjects WHERE exam_id = ? ORDER BY subject_name");
     $subjects->execute([(int) $examId]);
     $subjects = $subjects->fetchAll(PDO::FETCH_ASSOC);
+    if (!$subjects) {
+        return [
+            'exam' => $exam,
+            'results' => [],
+            'subjects' => [],
+            'subject_stats' => [],
+            'pass_count' => 0,
+            'fail_count' => 0,
+            'avg_pct' => 0,
+            'unmarked_count' => count($students),
+        ];
+    }
     $results = [];
+    $unmarked = 0;
+    $subjectStats = [];
+    foreach ($subjects as $sub) {
+        $subjectStats[$sub['id']] = [
+            'subject' => $sub,
+            'marked' => 0,
+            'absent' => 0,
+            'total_obt' => 0.0,
+            'avg' => 0.0,
+        ];
+    }
     foreach ($students as $st) {
         $totalObt = 0;
         $totalMax = 0;
+        $markedAny = false;
+        $subjectMarks = [];
         foreach ($subjects as $sub) {
-            $m = $pdo->prepare("SELECT marks_obtained FROM student_marks WHERE student_id = ? AND exam_subject_id = ?");
+            $m = $pdo->prepare("SELECT marks_obtained, grade FROM student_marks WHERE student_id = ? AND exam_subject_id = ?");
             $m->execute([$st['id'], $sub['id']]);
-            $obt = (float) ($m->fetchColumn() ?: 0);
-            $totalObt += $obt;
-            $totalMax += (int) $sub['max_marks'];
+            $row = $m->fetch(PDO::FETCH_ASSOC);
+            $grade = $row['grade'] ?? null;
+            $obtRaw = $row['marks_obtained'] ?? null;
+            $isAbsent = in_array(strtoupper((string) $grade), ['AB', 'NA'], true) || $obtRaw === null || $obtRaw === '';
+            if ($row && !$isAbsent) {
+                $markedAny = true;
+                $obt = (float) $obtRaw;
+                $totalObt += $obt;
+                $totalMax += (int) $sub['max_marks'];
+                $subjectStats[$sub['id']]['marked']++;
+                $subjectStats[$sub['id']]['total_obt'] += $obt;
+                $subjectMarks[$sub['id']] = $obt;
+            } elseif ($row && in_array(strtoupper((string) $grade), ['AB', 'NA'], true)) {
+                $markedAny = true;
+                $subjectStats[$sub['id']]['absent']++;
+                $subjectMarks[$sub['id']] = strtoupper((string) $grade);
+                $totalMax += (int) $sub['max_marks'];
+            } else {
+                $subjectMarks[$sub['id']] = null;
+            }
         }
-        if ($totalMax <= 0) {
+        if (!$markedAny || $totalMax <= 0) {
+            $unmarked++;
             continue;
         }
         $pct = round($totalObt / $totalMax * 100, 1);
@@ -1798,16 +2021,24 @@ function getExamClassAnalytics($pdo, $examId) {
             'total_max' => $totalMax,
             'percentage' => $pct,
             'grade' => calculateGrade($totalObt, $totalMax),
+            'subject_marks' => $subjectMarks,
         ];
     }
+    foreach ($subjectStats as &$ss) {
+        $ss['avg'] = $ss['marked'] > 0 ? round($ss['total_obt'] / $ss['marked'], 1) : 0;
+    }
+    unset($ss);
     usort($results, fn($a, $b) => $b['percentage'] <=> $a['percentage']);
     $passCount = count(array_filter($results, fn($r) => $r['percentage'] >= 33));
     return [
         'exam' => $exam,
         'results' => $results,
+        'subjects' => $subjects,
+        'subject_stats' => array_values($subjectStats),
         'pass_count' => $passCount,
         'fail_count' => count($results) - $passCount,
         'avg_pct' => count($results) ? round(array_sum(array_column($results, 'percentage')) / count($results), 1) : 0,
+        'unmarked_count' => $unmarked,
     ];
 }
 

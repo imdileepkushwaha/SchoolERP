@@ -39,7 +39,7 @@ function ensureLibrarySchema($pdo): void {
         `issue_date` date NOT NULL,
         `due_date` date DEFAULT NULL,
         `return_date` date DEFAULT NULL,
-        `status` enum('Issued','Returned') NOT NULL DEFAULT 'Issued',
+        `status` enum('Issued','Returned','Lost') NOT NULL DEFAULT 'Issued',
         `fine` decimal(10,2) NOT NULL DEFAULT 0.00,
         `remarks` varchar(255) DEFAULT NULL,
         `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -48,6 +48,10 @@ function ensureLibrarySchema($pdo): void {
         KEY `student_id` (`student_id`),
         KEY `status` (`status`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {
+        $pdo->exec("ALTER TABLE library_issues MODIFY status enum('Issued','Returned','Lost') NOT NULL DEFAULT 'Issued'");
+    } catch (PDOException $e) {
+    }
 
     $catCount = (int) $pdo->query('SELECT COUNT(*) FROM library_categories')->fetchColumn();
     if ($catCount === 0) {

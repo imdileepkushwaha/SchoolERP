@@ -27,3 +27,14 @@ if (!empty($_SESSION['admin_must_change'])) {
         exit;
     }
 }
+
+// Enforce license + role/module gates BEFORE any page mutation handlers run.
+$adminAccessExempt = ['index.php', 'logout.php', 'db_setup.php'];
+if (!in_array($page, $adminAccessExempt, true)) {
+    require_once __DIR__ . '/../../includes/db_connect.php';
+    require_once __DIR__ . '/module_helpers.php';
+    ensureSuperAdminSchema($pdo);
+    ensureAdminAuthSchema($pdo);
+    assertSchoolLicenseActive($pdo);
+    requirePageModule($pdo);
+}

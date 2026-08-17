@@ -216,23 +216,22 @@ $availableBeds = max(0, $totalBeds - $occupiedBeds);
             <div class="erp-hostel-body">
                 <div class="erp-hostel-head">
                     <strong><?php echo htmlspecialchars($h['name']); ?></strong>
-                    <button type="submit" form="hostel-delete-<?php echo (int) $h['id']; ?>" class="action-btn delete-btn erp-hostel-delete" title="Delete hostel" onclick="return confirm(<?php echo json_encode('Delete hostel "' . $h['name'] . '" and all its rooms?'); ?>);"><i class="fas fa-trash"></i></button>
+                    <div class="table-action-btns">
+                        <button type="button" class="action-btn edit-btn" title="Edit"
+                            data-erp-edit-hostel
+                            data-id="<?php echo (int) $h['id']; ?>"
+                            data-name="<?php echo htmlspecialchars($h['name'], ENT_QUOTES); ?>"
+                            data-address="<?php echo htmlspecialchars($h['address'] ?? '', ENT_QUOTES); ?>">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <button type="submit" form="hostel-delete-<?php echo (int) $h['id']; ?>" class="action-btn delete-btn erp-hostel-delete" title="Delete hostel" onclick="return confirm(<?php echo json_encode('Delete hostel "' . $h['name'] . '" and all its rooms?'); ?>);"><i class="fas fa-trash"></i></button>
+                    </div>
                 </div>
                 <span><?php echo displayVal($h['address'], 'No address'); ?></span>
                 <div class="erp-occupancy-bar">
                     <div class="erp-occupancy-fill" style="width:<?php echo $hostelCap ? min(100, round($hostelOcc / $hostelCap * 100)) : 0; ?>%"></div>
                 </div>
                 <small><?php echo count($hostelRooms); ?> rooms · <?php echo $hostelOcc; ?>/<?php echo $hostelCap; ?> beds occupied</small>
-                <details class="erp-vehicle-edit" style="margin-top:10px">
-                    <summary><i class="fas fa-pen"></i> Edit</summary>
-                    <form method="POST" class="form-grid form-grid-1 form-grid-spaced" style="margin-top:8px">
-                        <input type="hidden" name="action" value="update_hostel">
-                        <input type="hidden" name="id" value="<?php echo (int) $h['id']; ?>">
-                        <div class="form-field"><label>Name</label><input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($h['name']); ?>" required></div>
-                        <div class="form-field"><label>Address</label><input type="text" name="address" class="form-input" value="<?php echo htmlspecialchars($h['address'] ?? ''); ?>"></div>
-                        <div class="form-actions-end"><button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save</button></div>
-                    </form>
-                </details>
             </div>
         </div>
         <?php endforeach; ?>
@@ -311,22 +310,22 @@ $availableBeds = max(0, $totalBeds - $occupiedBeds);
                 </td>
                 <td><span class="status-badge <?php echo $full ? 'badge-inactive' : 'badge-active'; ?>"><?php echo $full ? 'Full' : 'Available'; ?></span></td>
                 <td>
-                    <?php if ($occ === 0): ?>
-                    <button type="submit" form="room-delete-<?php echo (int) $rm['id']; ?>" class="action-btn delete-btn" title="Delete room" onclick="return confirm(<?php echo json_encode('Delete room ' . $rm['room_no'] . '?'); ?>);"><i class="fas fa-trash"></i></button>
-                    <?php else: ?>
-                    <span class="toolbar-meta">Vacate first</span>
-                    <?php endif; ?>
-                    <details class="erp-vehicle-edit" style="display:inline-block;margin-left:6px;vertical-align:middle">
-                        <summary style="cursor:pointer;list-style:none" title="Edit room"><i class="fas fa-pen"></i></summary>
-                        <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:8px;min-width:260px">
-                            <input type="hidden" name="action" value="update_room">
-                            <input type="hidden" name="id" value="<?php echo (int) $rm['id']; ?>">
-                            <div class="form-field"><label>Room</label><input type="text" name="room_no" class="form-input" value="<?php echo htmlspecialchars($rm['room_no']); ?>" required></div>
-                            <div class="form-field"><label>Type</label><input type="text" name="room_type" class="form-input" value="<?php echo htmlspecialchars($rm['room_type']); ?>"></div>
-                            <div class="form-field"><label>Capacity</label><input type="number" name="capacity" class="form-input" value="<?php echo (int) $rm['capacity']; ?>" min="<?php echo max(1, $occ); ?>"></div>
-                            <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm">Save</button></div>
-                        </form>
-                    </details>
+                    <div class="table-action-btns">
+                        <button type="button" class="action-btn edit-btn" title="Edit"
+                            data-erp-edit-room
+                            data-id="<?php echo (int) $rm['id']; ?>"
+                            data-room="<?php echo htmlspecialchars($rm['room_no'], ENT_QUOTES); ?>"
+                            data-type="<?php echo htmlspecialchars($rm['room_type'], ENT_QUOTES); ?>"
+                            data-capacity="<?php echo (int) $rm['capacity']; ?>"
+                            data-min-capacity="<?php echo max(1, $occ); ?>">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <?php if ($occ === 0): ?>
+                        <button type="submit" form="room-delete-<?php echo (int) $rm['id']; ?>" class="action-btn delete-btn" title="Delete room" onclick="return confirm(<?php echo json_encode('Delete room ' . $rm['room_no'] . '?'); ?>);"><i class="fas fa-trash"></i></button>
+                        <?php else: ?>
+                        <span class="toolbar-meta">Vacate first</span>
+                        <?php endif; ?>
+                    </div>
                 </td>
             </tr>
             <?php endforeach; else: ?>
@@ -381,4 +380,98 @@ $availableBeds = max(0, $totalBeds - $occupiedBeds);
     <input type="hidden" name="allotment_id" value="<?php echo (int) $a['id']; ?>">
 </form>
 <?php endforeach; ?>
+
+<div class="fs-modal" id="hostelEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-hostel-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="hostelEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-building"></i></div>
+            <div>
+                <h3 id="hostelEditModalTitle">Edit Hostel</h3>
+                <p>Update hostel name and address</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-hostel-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_hostel">
+            <input type="hidden" name="id" id="hostelEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="hostelEditName">Name</label><input type="text" name="name" id="hostelEditName" class="form-input" required></div>
+                <div class="form-field"><label for="hostelEditAddress">Address</label><input type="text" name="address" id="hostelEditAddress" class="form-input"></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-hostel-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="fs-modal" id="roomEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-room-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="roomEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-door-open"></i></div>
+            <div>
+                <h3 id="roomEditModalTitle">Edit Room</h3>
+                <p>Update room number, type and capacity</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-room-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="update_room">
+            <input type="hidden" name="id" id="roomEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="roomEditNo">Room Number</label><input type="text" name="room_no" id="roomEditNo" class="form-input" required></div>
+                <div class="form-field"><label for="roomEditType">Room Type</label><input type="text" name="room_type" id="roomEditType" class="form-input"></div>
+                <div class="form-field"><label for="roomEditCap">Capacity</label><input type="number" name="capacity" id="roomEditCap" class="form-input" min="1" required></div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-room-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    function wire(modalId, openSel, closeSel, fill, focusId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+        function open() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('fs-modal-open');
+            var el = document.getElementById(focusId);
+            if (el) setTimeout(function () { el.focus(); if (el.select) el.select(); }, 120);
+        }
+        function close() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            if (!document.querySelector('.fs-modal.is-open')) document.body.classList.remove('fs-modal-open');
+        }
+        document.querySelectorAll(openSel).forEach(function (btn) {
+            btn.addEventListener('click', function () { fill(btn); open(); });
+        });
+        modal.querySelectorAll(closeSel).forEach(function (el) { el.addEventListener('click', close); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) close();
+        });
+    }
+    wire('hostelEditModal', '[data-erp-edit-hostel]', '[data-hostel-modal-close]', function (btn) {
+        document.getElementById('hostelEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('hostelEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('hostelEditAddress').value = btn.getAttribute('data-address') || '';
+    }, 'hostelEditName');
+    wire('roomEditModal', '[data-erp-edit-room]', '[data-room-modal-close]', function (btn) {
+        document.getElementById('roomEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('roomEditNo').value = btn.getAttribute('data-room') || '';
+        document.getElementById('roomEditType').value = btn.getAttribute('data-type') || '';
+        var cap = document.getElementById('roomEditCap');
+        cap.value = btn.getAttribute('data-capacity') || '1';
+        cap.min = btn.getAttribute('data-min-capacity') || '1';
+    }, 'roomEditNo');
+});
+</script>
 <?php require_once 'includes/footer.php'; ?>

@@ -4204,12 +4204,17 @@ td .student-name-cell .name-info span {
 }
 
 .edit-btn {
-    background-color: #eff6ff; /* Light blue */
-    color: #3b82f6; /* Blue */
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 12px;
+    background: #e8f1ff;
+    color: #2563eb;
+    font-size: 0.9rem;
 }
 .edit-btn:hover {
-    background-color: #3b82f6;
-    color: var(--white);
+    background: #dbeafe;
+    color: #1d4ed8;
 }
 
 .delete-btn {
@@ -4587,6 +4592,27 @@ button.action-btn {
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+.section-chip-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+.sig-edit-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 72px;
+    padding: 12px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+.sig-edit-preview img {
+    max-height: 64px;
+    max-width: 100%;
+    object-fit: contain;
+}
 }
 
 .section-chip-label {
@@ -5539,6 +5565,12 @@ button.action-btn {
     text-decoration: none;
     font-size: 0.85rem;
     transition: background 0.15s;
+}
+
+button.doc-card-btn {
+    border: none;
+    cursor: pointer;
+    padding: 0;
 }
 
 .doc-card-btn-view {
@@ -7960,14 +7992,18 @@ button.action-btn {
 }
 
 .fs-head-btn.is-edit {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 12px;
+    background: #e8f1ff;
     color: #2563eb;
-    border-color: #bfdbfe;
-    background: #eff6ff;
+    font-size: 0.9rem;
 }
 
 .fs-head-btn.is-edit:hover {
     background: #dbeafe;
-    border-color: #93c5fd;
+    color: #1d4ed8;
 }
 
 .fs-head-btn.is-delete {

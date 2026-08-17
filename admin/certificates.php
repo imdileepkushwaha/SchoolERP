@@ -24,6 +24,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: certificate_print.php?id=' . $pdo->lastInsertId());
         exit;
     }
+    if (($_POST['action'] ?? '') === 'update_cert_purpose') {
+        $certId = (int) ($_POST['id'] ?? 0);
+        if ($certId > 0) {
+            $pdo->prepare('UPDATE certificates SET purpose = ? WHERE id = ?')
+                ->execute([trim($_POST['purpose'] ?? ''), $certId]);
+            $_SESSION['success_msg'] = 'Certificate purpose updated.';
+        }
+        header('Location: certificates.php');
+        exit;
+    }
     if (($_POST['action'] ?? '') === 'delete_cert') {
         $certId = (int) ($_POST['id'] ?? 0);
         if ($certId > 0) {
@@ -252,9 +262,12 @@ foreach ($issued as $c) {
                     <span><i class="fas fa-school"></i> <?php echo htmlspecialchars($c['class']); ?></span>
                     <span><i class="fas fa-calendar"></i> <?php echo date('d M Y', strtotime($c['issue_date'])); ?></span>
                 </div>
-                <?php if (!empty($c['purpose'])): ?>
-                <p class="cert-recent-purpose"><?php echo htmlspecialchars($c['purpose']); ?></p>
-                <?php endif; ?>
+                <form method="POST" class="cert-purpose-edit" style="display:flex;gap:6px;align-items:center;margin-top:8px">
+                    <input type="hidden" name="action" value="update_cert_purpose">
+                    <input type="hidden" name="id" value="<?php echo (int) $c['id']; ?>">
+                    <input type="text" name="purpose" class="form-input" value="<?php echo htmlspecialchars($c['purpose'] ?? ''); ?>" placeholder="Purpose">
+                    <button type="submit" class="action-btn edit-btn" title="Save purpose"><i class="fas fa-save"></i></button>
+                </form>
             </div>
             <div class="cert-recent-actions">
                 <span class="cert-recent-avatar"><?php echo htmlspecialchars($initials); ?></span>

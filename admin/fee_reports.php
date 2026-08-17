@@ -12,6 +12,10 @@ if ($year < 2000 || $year > 2100) {
     $year = (int) date('Y');
 }
 
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'fees');
+
 if (isset($_GET['export']) && $_GET['export'] === 'defaulters') {
     $defaulters = getFeeDefaulters($pdo, $classFilter);
     $filename = 'fee_defaulters_' . ($classFilter !== '' ? preg_replace('/\W+/', '_', $classFilter) . '_' : '') . date('Ymd') . '.csv';

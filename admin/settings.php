@@ -26,7 +26,7 @@ $school = getSchoolProfile($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
-    $manageActions = ['save_school', 'save_signature', 'delete_signature', 'default_signature', 'add_gallery', 'delete_gallery', 'save_staff', 'delete_staff'];
+    $manageActions = ['save_school', 'save_signature', 'delete_signature', 'default_signature', 'add_gallery', 'update_gallery', 'delete_gallery', 'save_staff', 'delete_staff'];
     if (in_array($action, $manageActions, true) && !$canManage) {
         $_SESSION['error_msg'] = 'Your login role cannot change school settings.';
         header('Location: settings.php?tab=password');
@@ -190,6 +190,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if ($action === 'update_gallery') {
+        $path = (string) ($_POST['gallery_path'] ?? '');
+        $title = trim((string) ($_POST['gallery_title'] ?? ''));
+        $items = getWebsiteGallery($pdo);
+        $updated = false;
+        foreach ($items as &$item) {
+            if (($item['path'] ?? '') === $path) {
+                $item['title'] = $title !== '' ? $title : 'Gallery';
+                $updated = true;
+                break;
+            }
+        }
+        unset($item);
+        if ($updated) {
+            saveWebsiteGallery($pdo, $items);
+            adminLogActivity($pdo, 'gallery_updated', $path);
+            $_SESSION['success_msg'] = 'Gallery caption updated.';
+        } else {
+            $_SESSION['error_msg'] = 'Gallery item not found.';
+        }
+        header('Location: settings.php?tab=gallery');
+        exit;
+    }
+
     if ($action === 'delete_gallery') {
         $path = (string) ($_POST['gallery_path'] ?? '');
         $items = [];
@@ -336,23 +360,10 @@ $logoLightPreviewUrl = schoolBrandingUrl($school['logo_light'] ?? '', 'admin');
 $logoIconPreviewUrl = schoolBrandingUrl($school['logo_icon'] ?? '', 'admin');
 $faviconPreviewUrl = schoolBrandingUrl($school['favicon'] ?? '', 'admin');
 $signatures = getAuthoritySignatures($pdo);
-$editSig = null;
-if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
-    $editSig = getAuthoritySignatureById($pdo, (int) $_GET['edit']);
-}
 $galleryItems = $canManage ? getWebsiteGallery($pdo) : [];
 $staffUsers = [];
-$editStaff = null;
 if ($canManage && $activeTab === 'staff') {
     $staffUsers = $pdo->query('SELECT id, username, name, role, status, must_change_password, created_at FROM admin_users ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
-    if (!empty($_GET['edit'])) {
-        foreach ($staffUsers as $su) {
-            if ((int) $su['id'] === (int) $_GET['edit']) {
-                $editStaff = $su;
-                break;
-            }
-        }
-    }
 }
 $activityPage = max(1, (int) ($_GET['p'] ?? 1));
 $activityPer = 50;
@@ -556,7 +567,17 @@ if ($canManage && $activeTab === 'activity') {
                         <?php if ((int) $sig['is_default'] !== 1 && $sig['status'] !== 'Inactive'): ?>
                         <form method="POST"><input type="hidden" name="action" value="default_signature"><input type="hidden" name="sig_id" value="<?php echo (int) $sig['id']; ?>"><button type="submit" class="sig-btn" title="Set as default"><i class="fas fa-star"></i> Set default</button></form>
                         <?php endif; ?>
-                        <a href="settings.php?tab=signatures&edit=<?php echo (int) $sig['id']; ?>" class="sig-btn"><i class="fas fa-pen"></i> Edit</a>
+                        <button type="button" class="sig-btn" title="Edit"
+                            data-erp-edit-sig
+                            data-id="<?php echo (int) $sig['id']; ?>"
+                            data-name="<?php echo htmlspecialchars($sig['name'], ENT_QUOTES); ?>"
+                            data-designation="<?php echo htmlspecialchars($sig['designation'], ENT_QUOTES); ?>"
+                            data-sort="<?php echo (int) $sig['sort_order']; ?>"
+                            data-status="<?php echo htmlspecialchars($sig['status'], ENT_QUOTES); ?>"
+                            data-default="<?php echo (int) $sig['is_default']; ?>"
+                            data-image="<?php echo htmlspecialchars($sigUrl, ENT_QUOTES); ?>">
+                            <i class="fas fa-pen"></i>
+                        </button>
                         <form method="POST" onsubmit="return confirm('Remove this signatory?');"><input type="hidden" name="action" value="delete_signature"><input type="hidden" name="sig_id" value="<?php echo (int) $sig['id']; ?>"><button type="submit" class="sig-btn sig-btn-danger"><i class="fas fa-trash"></i></button></form>
                     </div>
                 </div>
@@ -564,39 +585,31 @@ if ($canManage && $activeTab === 'activity') {
             </div>
 
             <div class="settings-branding-block">
-                <h4><i class="fas fa-<?php echo $editSig ? 'pen' : 'plus'; ?>"></i> <?php echo $editSig ? 'Edit Signatory' : 'Add New Signatory'; ?></h4>
+                <h4><i class="fas fa-plus"></i> Add New Signatory</h4>
                 <p>Use a clear signature image on a transparent or white background for best print results.</p>
                 <form method="POST" class="settings-form" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="save_signature">
-                    <input type="hidden" name="sig_id" value="<?php echo $editSig ? (int) $editSig['id'] : 0; ?>">
-                    <?php
-                    $editSigUrl = $editSig ? schoolBrandingUrl($editSig['signature'] ?? '', 'admin') : '';
-                    $hasSigImg = $editSigUrl !== '';
-                    ?>
+                    <input type="hidden" name="sig_id" value="0">
                     <div class="sa-logo-grid">
-                        <article class="sa-logo-card tone-light shape-wide<?php echo $hasSigImg ? ' has-image' : ''; ?>" data-logo-card data-original="<?php echo htmlspecialchars($editSigUrl); ?>">
+                        <article class="sa-logo-card tone-light shape-wide" data-logo-card data-original="">
                             <div class="sa-logo-stage">
                                 <div class="sa-logo-frame" data-logo-frame>
-                                    <?php if ($hasSigImg): ?>
-                                    <img src="<?php echo htmlspecialchars($editSigUrl); ?>" alt="Signature">
-                                    <?php else: ?>
                                     <span class="sa-logo-empty">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                         Drop signature here
                                     </span>
-                                    <?php endif; ?>
                                 </div>
-                                <span class="sa-logo-status" data-logo-status><?php echo $hasSigImg ? 'Current' : 'Not set'; ?></span>
+                                <span class="sa-logo-status" data-logo-status>Not set</span>
                             </div>
                             <div class="sa-logo-body">
                                 <div class="sa-logo-copy">
                                     <strong>Signature image</strong>
                                     <p>Transparent PNG looks best on ID cards, certificates and receipts.</p>
                                 </div>
-                                <span class="sa-logo-hint">PNG, JPG or WEBP · max 2MB<?php echo $editSig ? ' · leave blank to keep current' : ''; ?></span>
+                                <span class="sa-logo-hint">PNG, JPG or WEBP · max 2MB</span>
                                 <div class="sa-logo-actions">
                                     <label class="sa-logo-pick">
-                                        <input type="file" class="sa-logo-file" name="sig_image" accept="image/png,image/jpeg,image/webp" data-logo-input<?php echo $editSig ? '' : ' required'; ?>>
+                                        <input type="file" class="sa-logo-file" name="sig_image" accept="image/png,image/jpeg,image/webp" data-logo-input required>
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                         Choose image
                                     </label>
@@ -606,15 +619,14 @@ if ($canManage && $activeTab === 'activity') {
                         </article>
                     </div>
                     <div class="form-grid form-grid-2">
-                        <div class="form-field"><label>Signatory Name</label><input type="text" name="sig_name" class="form-input" value="<?php echo htmlspecialchars($editSig['name'] ?? $school['principal'] ?? ''); ?>" placeholder="e.g. Dr. A. Sharma" required></div>
-                        <div class="form-field"><label>Designation</label><input type="text" name="sig_designation" class="form-input" value="<?php echo htmlspecialchars($editSig['designation'] ?? 'Principal'); ?>" placeholder="e.g. Principal / Vice Principal / Exam Controller" required></div>
-                        <div class="form-field"><label>Display Order</label><input type="number" name="sig_sort_order" class="form-input" value="<?php echo (int) ($editSig['sort_order'] ?? 0); ?>"></div>
-                        <div class="form-field"><label>Status</label><select name="sig_status" class="form-input form-select"><option value="Active" <?php echo (($editSig['status'] ?? 'Active') === 'Active') ? 'selected' : ''; ?>>Active</option><option value="Inactive" <?php echo (($editSig['status'] ?? '') === 'Inactive') ? 'selected' : ''; ?>>Inactive</option></select></div>
+                        <div class="form-field"><label>Signatory Name</label><input type="text" name="sig_name" class="form-input" value="<?php echo htmlspecialchars($school['principal'] ?? ''); ?>" placeholder="e.g. Dr. A. Sharma" required></div>
+                        <div class="form-field"><label>Designation</label><input type="text" name="sig_designation" class="form-input" value="Principal" placeholder="e.g. Principal / Vice Principal / Exam Controller" required></div>
+                        <div class="form-field"><label>Display Order</label><input type="number" name="sig_sort_order" class="form-input" value="0"></div>
+                        <div class="form-field"><label>Status</label><select name="sig_status" class="form-input form-select"><option value="Active" selected>Active</option><option value="Inactive">Inactive</option></select></div>
                     </div>
-                    <label class="settings-toggle"><input type="checkbox" name="sig_make_default" value="1" <?php echo ($editSig && (int) $editSig['is_default'] === 1) ? 'checked' : (empty($signatures) ? 'checked' : ''); ?>><span>Set as default signatory (used on ID cards &amp; receipts)</span></label>
+                    <label class="settings-toggle"><input type="checkbox" name="sig_make_default" value="1" <?php echo empty($signatures) ? 'checked' : ''; ?>><span>Set as default signatory (used on ID cards &amp; receipts)</span></label>
                     <div class="settings-form-actions">
-                        <?php if ($editSig): ?><a href="settings.php?tab=signatures" class="btn-header-action btn-header-outline"><i class="fas fa-times"></i> Cancel</a><?php endif; ?>
-                        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> <?php echo $editSig ? 'Update Signatory' : 'Add Signatory'; ?></button>
+                        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Add Signatory</button>
                     </div>
                 </form>
             </div>
@@ -636,7 +648,12 @@ if ($canManage && $activeTab === 'activity') {
                 <article class="gallery-admin-card">
                     <img src="<?php echo htmlspecialchars($gUrl); ?>" alt="<?php echo htmlspecialchars($g['title']); ?>">
                     <div>
-                        <strong><?php echo htmlspecialchars($g['title']); ?></strong>
+                        <form method="POST" class="category-add-row" style="gap:8px;align-items:center;margin-bottom:8px">
+                            <input type="hidden" name="action" value="update_gallery">
+                            <input type="hidden" name="gallery_path" value="<?php echo htmlspecialchars($g['path']); ?>">
+                            <input type="text" name="gallery_title" class="form-input" value="<?php echo htmlspecialchars($g['title']); ?>" placeholder="Caption" style="min-width:140px">
+                            <button type="submit" class="action-btn" title="Save caption"><i class="fas fa-save"></i></button>
+                        </form>
                         <form method="POST" onsubmit="return confirm('Remove this photo?');">
                             <input type="hidden" name="action" value="delete_gallery">
                             <input type="hidden" name="gallery_path" value="<?php echo htmlspecialchars($g['path']); ?>">
@@ -694,7 +711,7 @@ if ($canManage && $activeTab === 'activity') {
             ];
             $staffActive = count(array_filter($staffUsers, fn($u) => ($u['status'] ?? '') === 'Active'));
             $staffMustChange = count(array_filter($staffUsers, fn($u) => !empty($u['must_change_password'])));
-            $isEditingSelf = $editStaff && (int) $editStaff['id'] === (int) $_SESSION['admin_id'];
+            $currentAdminId = (int) $_SESSION['admin_id'];
         ?>
         <div class="settings-panel active">
             <div class="settings-panel-head staff-panel-head">
@@ -702,9 +719,7 @@ if ($canManage && $activeTab === 'activity') {
                     <h3>Staff Logins</h3>
                     <p>Extra school-admin accounts with role-based access. Full Admin sees every enabled module.</p>
                 </div>
-                <?php if (!$editStaff): ?>
                 <a href="#staff-form" class="btn-header-action btn-header-primary"><i class="fas fa-user-plus"></i> Add login</a>
-                <?php endif; ?>
             </div>
 
             <div class="staff-stat-strip">
@@ -752,11 +767,10 @@ if ($canManage && $activeTab === 'activity') {
                     $display = trim((string) ($su['name'] ?? '')) ?: (string) $su['username'];
                     $roleKey = (string) ($su['role'] ?? 'admin');
                     $meta = $roleMeta[$roleKey] ?? ['icon' => 'fa-user', 'tone' => 'slate', 'desc' => ''];
-                    $isYou = (int) $su['id'] === (int) $_SESSION['admin_id'];
+                    $isYou = (int) $su['id'] === $currentAdminId;
                     $isActive = ($su['status'] ?? 'Active') === 'Active';
-                    $isEditing = $editStaff && (int) $editStaff['id'] === (int) $su['id'];
                 ?>
-                <article class="staff-card<?php echo $isEditing ? ' is-editing' : ''; ?><?php echo !$isActive ? ' is-inactive' : ''; ?>">
+                <article class="staff-card<?php echo !$isActive ? ' is-inactive' : ''; ?>">
                     <div class="staff-card-main">
                         <span class="staff-avatar tone-<?php echo htmlspecialchars($meta['tone']); ?>"><?php echo htmlspecialchars(adminInitials($display)); ?></span>
                         <div class="staff-card-info">
@@ -778,9 +792,16 @@ if ($canManage && $activeTab === 'activity') {
                         </div>
                     </div>
                     <div class="staff-card-actions">
-                        <a href="settings.php?tab=staff&amp;edit=<?php echo (int) $su['id']; ?>#staff-form" class="staff-action-btn" title="Edit">
-                            <i class="fas fa-pen"></i><span>Edit</span>
-                        </a>
+                        <button type="button" class="staff-action-btn" title="Edit"
+                            data-erp-edit-staff
+                            data-id="<?php echo (int) $su['id']; ?>"
+                            data-name="<?php echo htmlspecialchars($su['name'] ?? '', ENT_QUOTES); ?>"
+                            data-username="<?php echo htmlspecialchars($su['username'], ENT_QUOTES); ?>"
+                            data-role="<?php echo htmlspecialchars($roleKey, ENT_QUOTES); ?>"
+                            data-status="<?php echo htmlspecialchars($su['status'] ?? 'Active', ENT_QUOTES); ?>"
+                            data-self="<?php echo $isYou ? '1' : '0'; ?>">
+                            <i class="fas fa-pen"></i>
+                        </button>
                         <?php if (!$isYou): ?>
                         <form method="POST" onsubmit="return confirm('Delete this login permanently?');">
                             <input type="hidden" name="action" value="delete_staff">
@@ -799,59 +820,48 @@ if ($canManage && $activeTab === 'activity') {
             <div class="staff-form-card" id="staff-form">
                 <div class="staff-form-head">
                     <div class="staff-form-head-icon">
-                        <i class="fas fa-<?php echo $editStaff ? 'user-edit' : 'user-plus'; ?>"></i>
+                        <i class="fas fa-user-plus"></i>
                     </div>
                     <div>
-                        <h4><?php echo $editStaff ? 'Edit account' : 'Add staff login'; ?></h4>
-                        <p><?php echo $editStaff
-                            ? 'Update details for <strong>' . htmlspecialchars(trim((string) ($editStaff['name'] ?? '')) ?: (string) $editStaff['username']) . '</strong>.'
-                            : 'They will sign in at the School Admin login page.'; ?></p>
+                        <h4>Add staff login</h4>
+                        <p>They will sign in at the School Admin login page.</p>
                     </div>
                 </div>
                 <form method="POST" class="settings-form">
                     <input type="hidden" name="action" value="save_staff">
-                    <input type="hidden" name="staff_id" value="<?php echo $editStaff ? (int) $editStaff['id'] : 0; ?>">
+                    <input type="hidden" name="staff_id" value="0">
                     <div class="form-grid form-grid-2">
                         <div class="form-field">
                             <label>Display name</label>
-                            <input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($editStaff['name'] ?? ''); ?>" placeholder="e.g. Priya Sharma" required>
+                            <input type="text" name="name" class="form-input" placeholder="e.g. Priya Sharma" required>
                         </div>
                         <div class="form-field">
                             <label>Username</label>
-                            <input type="text" name="username" class="form-input" value="<?php echo htmlspecialchars($editStaff['username'] ?? ''); ?>" placeholder="e.g. priya" required autocomplete="off">
+                            <input type="text" name="username" class="form-input" placeholder="e.g. priya" required autocomplete="off">
                         </div>
                         <div class="form-field">
                             <label>Role</label>
-                            <select name="role" class="form-input form-select" <?php echo $isEditingSelf ? 'disabled' : ''; ?>>
+                            <select name="role" class="form-input form-select">
                                 <?php foreach (adminRoles() as $rk => $rm): ?>
-                                <option value="<?php echo htmlspecialchars($rk); ?>" <?php echo (($editStaff['role'] ?? 'receptionist') === $rk) ? 'selected' : ''; ?>><?php echo htmlspecialchars($rm['label']); ?></option>
+                                <option value="<?php echo htmlspecialchars($rk); ?>" <?php echo $rk === 'receptionist' ? 'selected' : ''; ?>><?php echo htmlspecialchars($rm['label']); ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <?php if ($isEditingSelf): ?>
-                            <input type="hidden" name="role" value="admin">
-                            <span class="field-hint">You cannot change your own role.</span>
-                            <?php endif; ?>
                         </div>
                         <div class="form-field">
                             <label>Status</label>
-                            <select name="status" class="form-input form-select" <?php echo $isEditingSelf ? 'disabled' : ''; ?>>
-                                <option value="Active" <?php echo (($editStaff['status'] ?? 'Active') === 'Active') ? 'selected' : ''; ?>>Active</option>
-                                <option value="Inactive" <?php echo (($editStaff['status'] ?? '') === 'Inactive') ? 'selected' : ''; ?>>Inactive</option>
+                            <select name="status" class="form-input form-select">
+                                <option value="Active" selected>Active</option>
+                                <option value="Inactive">Inactive</option>
                             </select>
-                            <?php if ($isEditingSelf): ?>
-                            <input type="hidden" name="status" value="Active">
-                            <span class="field-hint">You cannot deactivate your own account.</span>
-                            <?php endif; ?>
                         </div>
                         <div class="form-field form-field-full">
-                            <label><?php echo $editStaff ? 'New password <span class="staff-optional">(optional)</span>' : 'Password'; ?></label>
-                            <input type="password" name="password" class="form-input" <?php echo $editStaff ? '' : 'required'; ?> minlength="6" autocomplete="new-password" placeholder="<?php echo $editStaff ? 'Leave blank to keep current' : 'Minimum 6 characters'; ?>">
-                            <span class="field-hint"><?php echo $editStaff ? 'A new password forces a change on their next login.' : 'They must change this password after first login.'; ?></span>
+                            <label>Password</label>
+                            <input type="password" name="password" class="form-input" required minlength="6" autocomplete="new-password" placeholder="Minimum 6 characters">
+                            <span class="field-hint">They must change this password after first login.</span>
                         </div>
                     </div>
                     <div class="settings-form-actions staff-form-actions">
-                        <?php if ($editStaff): ?><a href="settings.php?tab=staff" class="btn-header-action btn-header-outline"><i class="fas fa-times"></i> Cancel</a><?php endif; ?>
-                        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> <?php echo $editStaff ? 'Update account' : 'Create login'; ?></button>
+                        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Create login</button>
                     </div>
                 </form>
             </div>
@@ -997,6 +1007,169 @@ document.querySelectorAll('[data-logo-card]').forEach(function (card) {
             }
         });
     }
+});
+</script>
+<?php endif; ?>
+
+<?php if ($canManage && ($activeTab === 'staff' || $activeTab === 'signatures')): ?>
+<?php if ($activeTab === 'staff'): ?>
+<div class="fs-modal" id="staffEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-staff-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="staffEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-user-edit"></i></div>
+            <div>
+                <h3 id="staffEditModalTitle">Edit account</h3>
+                <p>Update staff login details</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-staff-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form">
+            <input type="hidden" name="action" value="save_staff">
+            <input type="hidden" name="staff_id" id="staffEditId" value="">
+            <input type="hidden" name="role" id="staffEditRoleHidden" value="" disabled>
+            <input type="hidden" name="status" id="staffEditStatusHidden" value="" disabled>
+            <div class="fs-modal-body">
+                <div class="form-field"><label for="staffEditName">Display name</label><input type="text" name="name" id="staffEditName" class="form-input" required></div>
+                <div class="form-field"><label for="staffEditUsername">Username</label><input type="text" name="username" id="staffEditUsername" class="form-input" required autocomplete="off"></div>
+                <div class="form-field"><label for="staffEditRole">Role</label>
+                    <select name="role" id="staffEditRole" class="form-input form-select">
+                        <?php foreach (adminRoles() as $rk => $rm): ?>
+                        <option value="<?php echo htmlspecialchars($rk); ?>"><?php echo htmlspecialchars($rm['label']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <span class="field-hint" id="staffEditRoleHint" hidden>You cannot change your own role.</span>
+                </div>
+                <div class="form-field"><label for="staffEditStatus">Status</label>
+                    <select name="status" id="staffEditStatus" class="form-input form-select">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                    </select>
+                    <span class="field-hint" id="staffEditStatusHint" hidden>You cannot deactivate your own account.</span>
+                </div>
+                <div class="form-field"><label for="staffEditPassword">New password <span class="staff-optional">(optional)</span></label>
+                    <input type="password" name="password" id="staffEditPassword" class="form-input" minlength="6" autocomplete="new-password" placeholder="Leave blank to keep current">
+                    <span class="field-hint">A new password forces a change on their next login.</span>
+                </div>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-staff-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if ($activeTab === 'signatures'): ?>
+<div class="fs-modal" id="sigEditModal" aria-hidden="true">
+    <div class="fs-modal-backdrop" data-sig-modal-close></div>
+    <div class="fs-modal-panel" role="dialog" aria-modal="true" aria-labelledby="sigEditModalTitle">
+        <div class="fs-modal-header">
+            <div class="fs-modal-header-icon is-edit"><i class="fas fa-signature"></i></div>
+            <div>
+                <h3 id="sigEditModalTitle">Edit Signatory</h3>
+                <p>Update signature details and image</p>
+            </div>
+            <button type="button" class="fs-modal-close" data-sig-modal-close aria-label="Close"><i class="fas fa-times"></i></button>
+        </div>
+        <form method="POST" class="fs-modal-form" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="save_signature">
+            <input type="hidden" name="sig_id" id="sigEditId" value="">
+            <div class="fs-modal-body">
+                <div class="form-field">
+                    <label>Current signature</label>
+                    <div id="sigEditPreview" class="sig-edit-preview"><span class="sig-noimg"><i class="fas fa-image"></i> No image</span></div>
+                </div>
+                <div class="form-field"><label for="sigEditImage">Replace image <span class="staff-optional">(optional)</span></label>
+                    <input type="file" name="sig_image" id="sigEditImage" class="form-input" accept="image/png,image/jpeg,image/webp">
+                    <span class="field-hint">Leave blank to keep the current image.</span>
+                </div>
+                <div class="form-field"><label for="sigEditName">Signatory Name</label><input type="text" name="sig_name" id="sigEditName" class="form-input" required></div>
+                <div class="form-field"><label for="sigEditDesignation">Designation</label><input type="text" name="sig_designation" id="sigEditDesignation" class="form-input" required></div>
+                <div class="form-field"><label for="sigEditSort">Display Order</label><input type="number" name="sig_sort_order" id="sigEditSort" class="form-input"></div>
+                <div class="form-field"><label for="sigEditStatus">Status</label>
+                    <select name="sig_status" id="sigEditStatus" class="form-input form-select">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                    </select>
+                </div>
+                <label class="settings-toggle"><input type="checkbox" name="sig_make_default" id="sigEditDefault" value="1"><span>Set as default signatory</span></label>
+            </div>
+            <div class="fs-modal-footer">
+                <button type="button" class="btn-header-action btn-header-outline" data-sig-modal-close>Cancel</button>
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-check"></i> Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    function wireModal(modalId, openSel, closeSel, fill, focusId) {
+        var modal = document.getElementById(modalId);
+        if (!modal) return;
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+        function open() {
+            modal.classList.add('is-open');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('fs-modal-open');
+            var el = document.getElementById(focusId);
+            if (el) setTimeout(function () { el.focus(); if (el.select) el.select(); }, 120);
+        }
+        function close() {
+            modal.classList.remove('is-open');
+            modal.setAttribute('aria-hidden', 'true');
+            if (!document.querySelector('.fs-modal.is-open')) document.body.classList.remove('fs-modal-open');
+        }
+        document.querySelectorAll(openSel).forEach(function (btn) {
+            btn.addEventListener('click', function () { fill(btn); open(); });
+        });
+        modal.querySelectorAll(closeSel).forEach(function (el) { el.addEventListener('click', close); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && modal.classList.contains('is-open')) close();
+        });
+    }
+
+    wireModal('staffEditModal', '[data-erp-edit-staff]', '[data-staff-modal-close]', function (btn) {
+        var isSelf = btn.getAttribute('data-self') === '1';
+        document.getElementById('staffEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('staffEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('staffEditUsername').value = btn.getAttribute('data-username') || '';
+        document.getElementById('staffEditRole').value = btn.getAttribute('data-role') || 'receptionist';
+        document.getElementById('staffEditStatus').value = btn.getAttribute('data-status') || 'Active';
+        document.getElementById('staffEditPassword').value = '';
+        var roleSel = document.getElementById('staffEditRole');
+        var statusSel = document.getElementById('staffEditStatus');
+        var roleHidden = document.getElementById('staffEditRoleHidden');
+        var statusHidden = document.getElementById('staffEditStatusHidden');
+        roleSel.disabled = isSelf;
+        statusSel.disabled = isSelf;
+        roleHidden.disabled = !isSelf;
+        statusHidden.disabled = !isSelf;
+        if (isSelf) {
+            roleHidden.value = 'admin';
+            statusHidden.value = 'Active';
+        }
+        document.getElementById('staffEditRoleHint').hidden = !isSelf;
+        document.getElementById('staffEditStatusHint').hidden = !isSelf;
+    }, 'staffEditName');
+
+    wireModal('sigEditModal', '[data-erp-edit-sig]', '[data-sig-modal-close]', function (btn) {
+        document.getElementById('sigEditId').value = btn.getAttribute('data-id') || '';
+        document.getElementById('sigEditName').value = btn.getAttribute('data-name') || '';
+        document.getElementById('sigEditDesignation').value = btn.getAttribute('data-designation') || '';
+        document.getElementById('sigEditSort').value = btn.getAttribute('data-sort') || '0';
+        document.getElementById('sigEditStatus').value = btn.getAttribute('data-status') || 'Active';
+        document.getElementById('sigEditDefault').checked = btn.getAttribute('data-default') === '1';
+        document.getElementById('sigEditImage').value = '';
+        var preview = document.getElementById('sigEditPreview');
+        var img = btn.getAttribute('data-image') || '';
+        preview.innerHTML = img
+            ? '<img src="' + img.replace(/"/g, '&quot;') + '" alt="Signature">'
+            : '<span class="sig-noimg"><i class="fas fa-image"></i> No image</span>';
+    }, 'sigEditName');
 });
 </script>
 <?php endif; ?>

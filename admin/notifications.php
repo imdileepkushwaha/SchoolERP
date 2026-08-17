@@ -47,6 +47,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $_SESSION['error_msg'] = 'Recipient and message are required.';
         }
+    } elseif ($action === 'save_templates') {
+        saveNotificationTemplates($pdo, [
+            'fee_reminder' => $_POST['tpl_fee_reminder'] ?? '',
+            'attendance_alert' => $_POST['tpl_attendance_alert'] ?? '',
+            'birthday_wish' => $_POST['tpl_birthday_wish'] ?? '',
+        ]);
+        $_SESSION['success_msg'] = 'Message templates saved.';
     }
     header('Location: notifications.php');
     exit;
@@ -114,6 +121,26 @@ function notifyStatusClass($status) {
             </p>
         </div>
     </div>
+</div>
+
+<?php $notifTemplates = getNotificationTemplates($pdo); ?>
+<div class="form-section-card section-mb">
+    <div class="section-card-header">
+        <div class="section-card-icon section-icon-school"><i class="fas fa-edit"></i></div>
+        <div>
+            <h4>Message templates</h4>
+            <p>Placeholders: {name}, {class}, {balance}, {date}, {status}, {school}</p>
+        </div>
+    </div>
+    <form method="POST">
+        <input type="hidden" name="action" value="save_templates">
+        <div class="form-grid form-grid-1 form-grid-spaced">
+            <div class="form-field"><label>Fee reminder</label><textarea name="tpl_fee_reminder" class="form-input form-textarea" rows="2"><?php echo htmlspecialchars($notifTemplates['fee_reminder']); ?></textarea></div>
+            <div class="form-field"><label>Attendance alert</label><textarea name="tpl_attendance_alert" class="form-input form-textarea" rows="2"><?php echo htmlspecialchars($notifTemplates['attendance_alert']); ?></textarea></div>
+            <div class="form-field"><label>Birthday wish</label><textarea name="tpl_birthday_wish" class="form-input form-textarea" rows="2"><?php echo htmlspecialchars($notifTemplates['birthday_wish']); ?></textarea></div>
+        </div>
+        <div class="form-actions-end"><button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save Templates</button></div>
+    </form>
 </div>
 
 <div class="notify-stats-grid">
