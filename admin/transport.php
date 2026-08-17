@@ -5,6 +5,9 @@ require_once '../includes/db_connect.php';
 require_once 'includes/erp_helpers.php';
 
 ensureErpSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'transport');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -29,12 +32,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$studentId, (int)$_POST['route_id'], (int)($_POST['stop_id'] ?? 0) ?: null]);
             $_SESSION['success_msg'] = 'Student assigned to route.';
         }
+    } elseif ($action === 'unassign_student') {
+        $studentId = (int) ($_POST['student_id'] ?? 0);
+        if ($studentId > 0) {
+            $pdo->prepare('DELETE FROM student_transport WHERE student_id = ?')->execute([$studentId]);
+            $_SESSION['success_msg'] = 'Student removed from transport.';
+        }
+    } elseif ($action === 'delete_vehicle') {
+        $vid = (int) ($_POST['id'] ?? 0);
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM transport_routes WHERE vehicle_id = ?');
+        $stmt->execute([$vid]);
+        if ((int) $stmt->fetchColumn() > 0) {
+            $_SESSION['error_msg'] = 'Unlink this vehicle from routes before deleting.';
+        } else {
+            $pdo->prepare('DELETE FROM transport_vehicles WHERE id = ?')->execute([$vid]);
+            $_SESSION['success_msg'] = 'Vehicle deleted.';
+        }
+    } elseif ($action === 'delete_route') {
+        $rid = (int) ($_POST['id'] ?? 0);
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM student_transport WHERE route_id = ?');
+        $stmt->execute([$rid]);
+        if ((int) $stmt->fetchColumn() > 0) {
+            $_SESSION['error_msg'] = 'Unassign students from this route before deleting.';
+        } else {
+            $pdo->prepare('DELETE FROM transport_stops WHERE route_id = ?')->execute([$rid]);
+            $pdo->prepare('DELETE FROM transport_routes WHERE id = ?')->execute([$rid]);
+            $_SESSION['success_msg'] = 'Route deleted.';
+        }
+    } elseif ($action === 'delete_stop') {
+        $sid = (int) ($_POST['id'] ?? 0);
+        $pdo->prepare('UPDATE student_transport SET stop_id = NULL WHERE stop_id = ?')->execute([$sid]);
+        $pdo->prepare('DELETE FROM transport_stops WHERE id = ?')->execute([$sid]);
+        $_SESSION['success_msg'] = 'Stop deleted.';
+    } elseif ($action === 'update_vehicle') {
+        $vid = (int) ($_POST['id'] ?? 0);
+        $pdo->prepare('UPDATE transport_vehicles SET vehicle_no=?, model=?, capacity=?, driver_name=?, driver_phone=? WHERE id=?')
+            ->execute([
+                trim($_POST['vehicle_no'] ?? ''),
+                trim($_POST['model'] ?? ''),
+                (int) ($_POST['capacity'] ?? 40),
+                trim($_POST['driver_name'] ?? ''),
+                trim($_POST['driver_phone'] ?? ''),
+                $vid,
+            ]);
+        $_SESSION['success_msg'] = 'Vehicle updated.';
+    } elseif ($action === 'update_route') {
+        $rid = (int) ($_POST['id'] ?? 0);
+        $pdo->prepare('UPDATE transport_routes SET name=?, vehicle_id=?, fare=? WHERE id=?')
+            ->execute([
+                trim($_POST['route_name'] ?? ''),
+                (int) ($_POST['vehicle_id'] ?? 0) ?: null,
+                (float) ($_POST['fare'] ?? 0),
+                $rid,
+            ]);
+        $_SESSION['success_msg'] = 'Route updated.';
     }
-    header('Location: transport.php' . (isset($_GET['q']) ? '?q=' . urlencode($_GET['q']) : ''));
+    $qs = [];
+    foreach (['q', 'class', 'section'] as $key) {
+        $val = trim((string) ($_POST[$key] ?? $_GET[$key] ?? ''));
+        if ($val !== '') {
+            $qs[$key] = $val;
+        }
+    }
+    $hash = in_array($action, ['assign_student', 'unassign_student'], true) ? '#assign-student' : '';
+    if (in_array($action, ['add_vehicle', 'update_vehicle', 'delete_vehicle'], true)) {
+        $hash = '#vehicles';
+    } elseif (in_array($action, ['add_route', 'update_route', 'delete_route', 'add_stop', 'delete_stop'], true)) {
+        $hash = '#routes';
+    }
+    header('Location: transport.php' . ($qs ? '?' . http_build_query($qs) : '') . $hash);
     exit;
 }
 
 require_once 'includes/header.php';
+$class_options = getClassOptions($pdo);
+$filterName = trim((string) ($_GET['q'] ?? ''));
+$filterClass = trim((string) ($_GET['class'] ?? ''));
+$filterSection = trim((string) ($_GET['section'] ?? ''));
+$section_options = $filterClass !== '' ? getSectionOptions($pdo, $filterClass) : [];
 $vehicles = $pdo->query("SELECT * FROM transport_vehicles ORDER BY vehicle_no")->fetchAll(PDO::FETCH_ASSOC);
 $routes = $pdo->query("SELECT r.*, v.vehicle_no, v.capacity AS vehicle_capacity, v.driver_name, v.driver_phone FROM transport_routes r LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id ORDER BY r.name")->fetchAll(PDO::FETCH_ASSOC);
 $stopsByRoute = [];
@@ -50,12 +125,28 @@ $assignments = $pdo->query(
      INNER JOIN students s ON s.id = st.student_id INNER JOIN transport_routes r ON r.id = st.route_id ORDER BY s.name"
 )->fetchAll(PDO::FETCH_ASSOC);
 
-$search = trim($_GET['q'] ?? '');
+$hasAssignFilter = $filterName !== '' || $filterClass !== '' || $filterSection !== '';
 $searchResults = [];
-if ($search !== '') {
-    $like = '%' . $search . '%';
-    $stmt = $pdo->prepare("SELECT id, ad_no, name, class, section FROM students WHERE status='Active' AND (name LIKE ? OR ad_no LIKE ?) LIMIT 12");
-    $stmt->execute([$like, $like]);
+if ($hasAssignFilter) {
+    $sql = "SELECT id, ad_no, name, class, section FROM students WHERE status = 'Active'";
+    $params = [];
+    if ($filterName !== '') {
+        $sql .= " AND (name LIKE ? OR ad_no LIKE ?)";
+        $like = '%' . $filterName . '%';
+        $params[] = $like;
+        $params[] = $like;
+    }
+    if ($filterClass !== '') {
+        $sql .= " AND class = ?";
+        $params[] = $filterClass;
+    }
+    if ($filterSection !== '') {
+        $sql .= " AND section = ?";
+        $params[] = $filterSection;
+    }
+    $sql .= " ORDER BY class, section, name LIMIT 40";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     $searchResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -116,7 +207,7 @@ foreach ($assignments as $a) {
     </div>
 </div>
 
-<div class="details-grid section-mb">
+<div class="details-grid section-mb" id="vehicles">
     <div class="form-section-card">
         <div class="section-card-header">
             <div class="section-card-icon section-icon-school"><i class="fas fa-bus"></i></div>
@@ -226,13 +317,33 @@ foreach ($assignments as $a) {
                 <i class="fas fa-user-slash"></i> No driver assigned
             </div>
             <?php endif; ?>
+            <details class="erp-vehicle-edit">
+                <summary><i class="fas fa-pen"></i> Edit / Delete</summary>
+                <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:10px">
+                    <input type="hidden" name="action" value="update_vehicle">
+                    <input type="hidden" name="id" value="<?php echo (int) $v['id']; ?>">
+                    <div class="form-field"><label>Vehicle No</label><input type="text" name="vehicle_no" class="form-input" value="<?php echo htmlspecialchars($v['vehicle_no']); ?>" required></div>
+                    <div class="form-field"><label>Model</label><input type="text" name="model" class="form-input" value="<?php echo htmlspecialchars($v['model'] ?? ''); ?>"></div>
+                    <div class="form-field"><label>Capacity</label><input type="number" name="capacity" class="form-input" value="<?php echo (int) $v['capacity']; ?>" min="1"></div>
+                    <div class="form-field"><label>Driver</label><input type="text" name="driver_name" class="form-input" value="<?php echo htmlspecialchars($v['driver_name'] ?? ''); ?>"></div>
+                    <div class="form-field form-field-full"><label>Phone</label><input type="text" name="driver_phone" class="form-input" value="<?php echo htmlspecialchars($v['driver_phone'] ?? ''); ?>"></div>
+                    <div class="form-actions-end form-field-full" style="display:flex;gap:8px;justify-content:flex-end">
+                        <button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save</button>
+                    </div>
+                </form>
+                <form method="POST" style="margin-top:8px;text-align:right" onsubmit="return confirm('Delete this vehicle?');">
+                    <input type="hidden" name="action" value="delete_vehicle">
+                    <input type="hidden" name="id" value="<?php echo (int) $v['id']; ?>">
+                    <button type="submit" class="btn-header-action btn-header-outline btn-sm" style="color:#b91c1c"><i class="fas fa-trash"></i> Delete</button>
+                </form>
+            </details>
         </article>
         <?php endforeach; ?>
     </div>
 </div>
 <?php endif; ?>
 
-<div class="form-section-card section-mb">
+<div class="form-section-card section-mb" id="routes">
     <div class="section-card-header">
         <div class="section-card-icon section-icon-school"><i class="fas fa-map-marked-alt"></i></div>
         <div><h4>Routes & Stops</h4><p>Manage pickup points for each route</p></div>
@@ -258,10 +369,35 @@ foreach ($assignments as $a) {
                     </span>
                 </div>
             </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <?php if ($r['driver_name']): ?>
             <span class="promo-next-pill"><i class="fas fa-user"></i> <?php echo htmlspecialchars($r['driver_name']); ?></span>
             <?php endif; ?>
+            <form method="POST" onsubmit="return confirm('Delete this route and its stops?');">
+                <input type="hidden" name="action" value="delete_route">
+                <input type="hidden" name="id" value="<?php echo (int) $r['id']; ?>">
+                <button type="submit" class="action-btn delete-btn" title="Delete route"><i class="fas fa-trash"></i></button>
+            </form>
+            </div>
         </div>
+        <details class="erp-vehicle-edit" style="margin:8px 0 12px">
+            <summary><i class="fas fa-pen"></i> Edit route</summary>
+            <form method="POST" class="form-grid form-grid-3 form-grid-spaced" style="margin-top:10px">
+                <input type="hidden" name="action" value="update_route">
+                <input type="hidden" name="id" value="<?php echo (int) $r['id']; ?>">
+                <div class="form-field"><label>Name</label><input type="text" name="route_name" class="form-input" value="<?php echo htmlspecialchars($r['name']); ?>" required></div>
+                <div class="form-field"><label>Vehicle</label>
+                    <select name="vehicle_id" class="form-input form-select">
+                        <option value="">No vehicle</option>
+                        <?php foreach ($vehicles as $v): ?>
+                        <option value="<?php echo (int) $v['id']; ?>" <?php echo (int) ($r['vehicle_id'] ?? 0) === (int) $v['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($v['vehicle_no']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label>Fare (₹)</label><input type="number" step="0.01" name="fare" class="form-input" value="<?php echo htmlspecialchars((string) $r['fare']); ?>" min="0"></div>
+                <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save Route</button></div>
+            </form>
+        </details>
         <form method="POST" class="erp-stop-add-row">
             <input type="hidden" name="action" value="add_stop">
             <input type="hidden" name="route_id" value="<?php echo $r['id']; ?>">
@@ -279,6 +415,11 @@ foreach ($assignments as $a) {
                     <strong><?php echo htmlspecialchars($stop['stop_name']); ?></strong>
                     <?php if ($stop['pickup_time']): ?><span><i class="fas fa-clock"></i> <?php echo substr($stop['pickup_time'], 0, 5); ?></span><?php endif; ?>
                 </div>
+                <form method="POST" onsubmit="return confirm('Delete this stop?');" style="margin:0">
+                    <input type="hidden" name="action" value="delete_stop">
+                    <input type="hidden" name="id" value="<?php echo (int) $stop['id']; ?>">
+                    <button type="submit" class="action-btn delete-btn" title="Delete stop" style="width:28px;height:28px"><i class="fas fa-times"></i></button>
+                </form>
             </div>
             <?php endforeach; ?>
         </div>
@@ -289,33 +430,68 @@ foreach ($assignments as $a) {
     <?php endforeach; endif; ?>
 </div>
 
-<div class="form-section-card section-mb">
+<div class="form-section-card section-mb" id="assign-student">
     <div class="section-card-header">
         <div class="section-card-icon section-icon-school"><i class="fas fa-user-plus"></i></div>
-        <div><h4>Assign Student to Route</h4><p>Search by name or admission number</p></div>
+        <div><h4>Assign Student to Route</h4><p>Filter by name, class and section, then assign a route</p></div>
     </div>
-    <form method="GET" class="category-add-row">
-        <div class="form-field form-field-grow"><label>Find student</label><input type="text" name="q" class="form-input" value="<?php echo htmlspecialchars($search); ?>" placeholder="Name or admission no."></div>
-        <div class="form-field category-add-btn-wrap"><label>&nbsp;</label><button type="submit" class="btn-header-action btn-header-primary category-add-btn"><i class="fas fa-search"></i> Search</button></div>
+    <form method="GET" class="form-grid form-grid-4 form-grid-spaced erp-assign-filters" action="transport.php#assign-student">
+        <div class="form-field">
+            <label>Name / Adm No</label>
+            <input type="text" name="q" class="form-input" value="<?php echo htmlspecialchars($filterName); ?>" placeholder="Name or admission no.">
+        </div>
+        <div class="form-field">
+            <label>Class</label>
+            <select name="class" class="form-input form-select" onchange="this.form.section.value=''; this.form.submit()">
+                <option value="">All classes</option>
+                <?php foreach ($class_options as $c): ?>
+                <option value="<?php echo htmlspecialchars($c); ?>" <?php echo $filterClass === $c ? 'selected' : ''; ?>><?php echo htmlspecialchars($c); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="form-field">
+            <label>Section</label>
+            <select name="section" class="form-input form-select" <?php echo $filterClass === '' ? 'disabled' : ''; ?> onchange="this.form.submit()">
+                <option value="">All sections</option>
+                <?php foreach ($section_options as $sec): ?>
+                <option value="<?php echo htmlspecialchars($sec); ?>" <?php echo $filterSection === $sec ? 'selected' : ''; ?>><?php echo htmlspecialchars($sec); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="form-field erp-assign-filter-actions">
+            <label>&nbsp;</label>
+            <div class="erp-assign-filter-btns">
+                <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-filter"></i> Filter</button>
+                <?php if ($hasAssignFilter): ?>
+                <a href="transport.php#assign-student" class="btn-header-action btn-header-outline">Reset</a>
+                <?php endif; ?>
+            </div>
+        </div>
     </form>
-    <?php if ($search !== '' && empty($searchResults)): ?>
-    <div class="tab-empty-state tab-empty-pad-sm"><p>No students found.</p></div>
+    <?php if ($hasAssignFilter && empty($searchResults)): ?>
+    <div class="tab-empty-state tab-empty-pad-sm"><p>No students match these filters.</p></div>
+    <?php elseif (!$hasAssignFilter): ?>
+    <div class="tab-empty-state tab-empty-pad-sm"><p>Choose a class, section or name to list students for assignment.</p></div>
     <?php endif; ?>
 </div>
 
 <?php if ($searchResults): ?>
 <div class="erp-search-results student-search-results">
+    <div class="erp-assign-results-meta"><?php echo count($searchResults); ?> student<?php echo count($searchResults) === 1 ? '' : 's'; ?> found<?php echo count($searchResults) >= 40 ? ' (showing first 40)' : ''; ?></div>
 <?php foreach ($searchResults as $sr): ?>
-<form method="POST" class="erp-search-item student-search-card student-portal-card">
+<form method="POST" class="erp-search-item student-search-card student-portal-card" action="transport.php#assign-student">
     <input type="hidden" name="action" value="assign_student">
     <input type="hidden" name="student_id" value="<?php echo $sr['id']; ?>">
+    <input type="hidden" name="q" value="<?php echo htmlspecialchars($filterName); ?>">
+    <input type="hidden" name="class" value="<?php echo htmlspecialchars($filterClass); ?>">
+    <input type="hidden" name="section" value="<?php echo htmlspecialchars($filterSection); ?>">
     <div class="student-search-main">
         <div class="student-search-avatar"><i class="fas fa-user-graduate"></i></div>
         <div class="student-search-info">
             <strong><?php echo htmlspecialchars($sr['name']); ?></strong>
             <span><?php echo htmlspecialchars($sr['ad_no']); ?></span>
             <div class="student-search-meta">
-                <span class="student-search-class-pill"><i class="fas fa-school"></i> Class <?php echo htmlspecialchars($sr['class']); ?> · <?php echo htmlspecialchars($sr['section'] ?? 'A'); ?></span>
+                <span class="student-search-class-pill"><i class="fas fa-school"></i> <?php echo htmlspecialchars($sr['class']); ?> · <?php echo htmlspecialchars($sr['section'] ?? 'A'); ?></span>
             </div>
         </div>
     </div>
@@ -341,7 +517,7 @@ foreach ($assignments as $a) {
     </div>
     <div class="table-wrapper">
         <table>
-            <thead><tr><th>Admission No</th><th>Student</th><th>Class</th><th>Route</th></tr></thead>
+            <thead><tr><th>Admission No</th><th>Student</th><th>Class</th><th>Route</th><th class="th-actions">Actions</th></tr></thead>
             <tbody>
             <?php if ($assignments): foreach ($assignments as $a): ?>
             <tr>
@@ -349,9 +525,16 @@ foreach ($assignments as $a) {
                 <td><?php echo htmlspecialchars($a['name']); ?></td>
                 <td><span class="promo-next-pill"><?php echo htmlspecialchars($a['class']); ?> · <?php echo htmlspecialchars($a['section'] ?? 'A'); ?></span></td>
                 <td><?php echo htmlspecialchars($a['route_name']); ?></td>
+                <td>
+                    <form method="POST" onsubmit="return confirm(<?php echo json_encode('Remove ' . $a['name'] . ' from transport?'); ?>);">
+                        <input type="hidden" name="action" value="unassign_student">
+                        <input type="hidden" name="student_id" value="<?php echo (int) $a['student_id']; ?>">
+                        <button type="submit" class="action-btn delete-btn" title="Unassign"><i class="fas fa-user-minus"></i></button>
+                    </form>
+                </td>
             </tr>
             <?php endforeach; else: ?>
-            <tr><td colspan="4" class="table-empty-cell">No students assigned to transport yet.</td></tr>
+            <tr><td colspan="5" class="table-empty-cell">No students assigned to transport yet.</td></tr>
             <?php endif; ?>
             </tbody>
         </table>

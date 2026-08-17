@@ -1,13 +1,10 @@
 <?php
-// admin/student_export.php
-session_start();
+require_once 'includes/init.php';
 require_once '../includes/db_connect.php';
+require_once 'includes/module_helpers.php';
 
-// Check authentication
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header('Location: index.php');
-    exit;
-}
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'students');
 
 // Set headers to force download as native Excel (.xls) file format
 header("Content-Type: application/vnd.ms-excel");

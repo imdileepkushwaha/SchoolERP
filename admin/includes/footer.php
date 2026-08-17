@@ -8,9 +8,9 @@
                 <p>&copy; <?php echo date('Y'); ?> <strong>EduDash</strong>. All rights reserved.</p>
             </div>
             <div class="footer-right">
-                <a href="#">Privacy Policy</a>
-                <a href="#">Terms of Service</a>
-                <a href="#">Support</a>
+                <a href="../index.php" target="_blank" rel="noopener">School Website</a>
+                <a href="settings.php?tab=password">Password</a>
+                <a href="profile.php">My Profile</a>
             </div>
         </footer>
     </main> <!-- End admin-main -->
@@ -47,12 +47,11 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const deleteBtns = document.querySelectorAll('.btn-delete-confirm');
-
-    deleteBtns.forEach(btn => {
-        btn.addEventListener('click', function(e) {
+    document.querySelectorAll('.btn-delete-confirm').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
             e.preventDefault();
-            const href = this.getAttribute('href');
+            var form = btn.closest('form');
+            var href = btn.getAttribute('href');
             Swal.fire({
                 title: 'Are you sure?',
                 text: "You won't be able to revert this!",
@@ -61,8 +60,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 confirmButtonColor: '#ef4444',
                 cancelButtonColor: '#94a3b8',
                 confirmButtonText: 'Yes, delete it!'
-            }).then((result) => {
-                if (result.isConfirmed) {
+            }).then(function (result) {
+                if (!result.isConfirmed) return;
+                if (form) {
+                    form.submit();
+                } else if (href) {
                     window.location.href = href;
                 }
             });

@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 require_once 'includes/header.php';
-$enquiries = $pdo->query("SELECT * FROM admission_enquiries ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+$enquiries = $pdo->query("SELECT * FROM admission_enquiries WHERE IFNULL(class_sought,'') <> 'Website Contact' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
 $newCount = count(array_filter($enquiries, fn($e) => $e['status'] === 'New'));
 ?>
 <div class="content-top-bar">

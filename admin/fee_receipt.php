@@ -1,14 +1,14 @@
 <?php
-session_start();
+require_once 'includes/init.php';
 require_once '../includes/db_connect.php';
 require_once 'includes/erp_helpers.php';
 require_once 'includes/settings_helpers.php';
+require_once 'includes/module_helpers.php';
 require_once 'includes/fee_receipt_breakdown.php';
 require_once 'includes/fee_receipt_view.php';
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header('Location: index.php');
-    exit;
-}
+
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'fees');
 ensureErpSchema($pdo);
 ensureSettingsSchema($pdo);
 migrateFeeMonthBackfillCleanup($pdo);

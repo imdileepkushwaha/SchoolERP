@@ -3,23 +3,35 @@ $page_title = "Settings";
 require_once 'includes/init.php';
 require_once '../includes/db_connect.php';
 require_once 'includes/settings_helpers.php';
-require_once 'includes/db_settings_helpers.php';
 
 ensureSettingsSchema($pdo);
+ensureAdminAuthSchema($pdo);
 
-$activeTab = $_GET['tab'] ?? 'school';
-$allowedTabs = ['school', 'signatures', 'email', 'sms', 'whatsapp', 'database', 'password'];
+$canManage = adminCanManageSchool();
+$activeTab = $_GET['tab'] ?? ($canManage ? 'school' : 'password');
+$allowedTabs = $canManage
+    ? ['school', 'signatures', 'gallery', 'staff', 'activity', 'password']
+    : ['password'];
+$movedTabs = ['email', 'sms', 'whatsapp', 'database'];
+if (in_array($activeTab, $movedTabs, true)) {
+    $_SESSION['error_msg'] = 'Email, SMS, WhatsApp and Database settings are managed in SuperAdmin.';
+    header('Location: settings.php?tab=' . ($canManage ? 'school' : 'password'));
+    exit;
+}
 if (!in_array($activeTab, $allowedTabs, true)) {
-    $activeTab = 'school';
+    $activeTab = $canManage ? 'school' : 'password';
 }
 
-$smtp = getSmtpSettings($pdo);
-$sms = getSmsSettings($pdo);
-$whatsapp = getWhatsAppSettings($pdo);
 $school = getSchoolProfile($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    $manageActions = ['save_school', 'save_signature', 'delete_signature', 'default_signature', 'add_gallery', 'delete_gallery', 'save_staff', 'delete_staff'];
+    if (in_array($action, $manageActions, true) && !$canManage) {
+        $_SESSION['error_msg'] = 'Your login role cannot change school settings.';
+        header('Location: settings.php?tab=password');
+        exit;
+    }
 
     if ($action === 'save_school') {
         $profile = [
@@ -161,113 +173,140 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    if ($action === 'save_smtp') {
-        saveSettingsGroup($pdo, [
-            'smtp_enabled'    => isset($_POST['smtp_enabled']) ? '1' : '0',
-            'smtp_host'       => $_POST['smtp_host'] ?? '',
-            'smtp_port'       => $_POST['smtp_port'] ?? '587',
-            'smtp_encryption' => $_POST['smtp_encryption'] ?? 'tls',
-            'smtp_username'   => $_POST['smtp_username'] ?? '',
-            'smtp_password'   => $_POST['smtp_password'] ?? '',
-            'smtp_from_email' => $_POST['smtp_from_email'] ?? '',
-            'smtp_from_name'  => $_POST['smtp_from_name'] ?? '',
-        ], ['smtp_password']);
-        $_SESSION['success_msg'] = 'Email SMTP settings saved.';
-        header('Location: settings.php?tab=email');
-        exit;
-    }
-
-    if ($action === 'test_smtp') {
-        $testCfg = [
-            'host'        => trim($_POST['smtp_host'] ?? $smtp['host']),
-            'port'        => trim($_POST['smtp_port'] ?? $smtp['port']),
-            'encryption'  => trim($_POST['smtp_encryption'] ?? $smtp['encryption']),
-            'username'    => trim($_POST['smtp_username'] ?? $smtp['username']),
-            'password'    => trim($_POST['smtp_password'] ?? '') !== '' ? trim($_POST['smtp_password']) : $smtp['password'],
-            'from_email'  => trim($_POST['smtp_from_email'] ?? $smtp['from_email']),
-            'from_name'   => trim($_POST['smtp_from_name'] ?? $smtp['from_name']),
-        ];
-        $testTo = trim($_POST['test_email'] ?? $testCfg['from_email']);
-        $err = '';
-        $ok = sendSmtpEmail($testCfg, $testTo, 'EduDash SMTP Test', '<p>Your SMTP configuration is working correctly.</p><p>Sent at ' . date('Y-m-d H:i:s') . '</p>', $err);
-        if ($ok) {
-            $_SESSION['success_msg'] = 'Test email sent to ' . $testTo;
-        } else {
-            $_SESSION['error_msg'] = 'SMTP test failed: ' . $err;
+    if ($action === 'add_gallery') {
+        $title = trim((string) ($_POST['gallery_title'] ?? ''));
+        $uploaded = uploadGalleryFile($_FILES['gallery_image'] ?? []);
+        if ($uploaded === false || $uploaded === null) {
+            $_SESSION['error_msg'] = 'Upload a JPG, PNG, WEBP or GIF image (max 2MB).';
+            header('Location: settings.php?tab=gallery');
+            exit;
         }
-        header('Location: settings.php?tab=email');
+        $items = getWebsiteGallery($pdo);
+        $items[] = ['path' => $uploaded, 'title' => $title !== '' ? $title : 'Gallery'];
+        saveWebsiteGallery($pdo, $items);
+        adminLogActivity($pdo, 'gallery_added', $title);
+        $_SESSION['success_msg'] = 'Gallery photo added.';
+        header('Location: settings.php?tab=gallery');
         exit;
     }
 
-    if ($action === 'save_sms') {
-        saveSettingsGroup($pdo, [
-            'sms_enabled'   => isset($_POST['sms_enabled']) ? '1' : '0',
-            'sms_provider'  => $_POST['sms_provider'] ?? 'MSG91',
-            'sms_api_key'   => $_POST['sms_api_key'] ?? '',
-            'sms_sender_id' => $_POST['sms_sender_id'] ?? '',
-            'sms_route'     => $_POST['sms_route'] ?? '4',
-            'sms_api_url'   => $_POST['sms_api_url'] ?? '',
-        ], ['sms_api_key']);
-        $_SESSION['success_msg'] = 'SMS settings saved.';
-        header('Location: settings.php?tab=sms');
-        exit;
-    }
-
-    if ($action === 'test_sms') {
-        $mobile = trim($_POST['test_mobile'] ?? '');
-        $msg = 'EduDash SMS test — your MSG/SMS setup is working. ' . date('H:i:s');
-        if (trim($_POST['sms_api_key'] ?? '') !== '') {
-            setSetting($pdo, 'sms_api_key', trim($_POST['sms_api_key']));
-        }
-        foreach (['sms_provider', 'sms_sender_id', 'sms_route', 'sms_api_url'] as $k) {
-            if (isset($_POST[$k]) && $_POST[$k] !== '') {
-                setSetting($pdo, $k, trim($_POST[$k]));
+    if ($action === 'delete_gallery') {
+        $path = (string) ($_POST['gallery_path'] ?? '');
+        $items = [];
+        foreach (getWebsiteGallery($pdo) as $item) {
+            if ($item['path'] === $path) {
+                deleteGalleryFile($path);
+                continue;
             }
+            $items[] = $item;
         }
-        setSetting($pdo, 'sms_enabled', '1');
-        $result = dispatchSms($pdo, $mobile, $msg);
-        if ($result['ok']) {
-            $_SESSION['success_msg'] = 'Test SMS sent to ' . $mobile;
-        } else {
-            $_SESSION['error_msg'] = $result['error'];
-        }
-        header('Location: settings.php?tab=sms');
+        saveWebsiteGallery($pdo, $items);
+        adminLogActivity($pdo, 'gallery_deleted', $path);
+        $_SESSION['success_msg'] = 'Photo removed.';
+        header('Location: settings.php?tab=gallery');
         exit;
     }
 
-    if ($action === 'save_whatsapp') {
-        saveSettingsGroup($pdo, [
-            'whatsapp_enabled'         => isset($_POST['whatsapp_enabled']) ? '1' : '0',
-            'whatsapp_provider'        => $_POST['whatsapp_provider'] ?? 'Meta Cloud API',
-            'whatsapp_api_token'       => $_POST['whatsapp_api_token'] ?? '',
-            'whatsapp_phone_id'        => $_POST['whatsapp_phone_id'] ?? '',
-            'whatsapp_business_number' => $_POST['whatsapp_business_number'] ?? '',
-            'whatsapp_api_url'         => $_POST['whatsapp_api_url'] ?? '',
-        ], ['whatsapp_api_token']);
-        $_SESSION['success_msg'] = 'WhatsApp settings saved.';
-        header('Location: settings.php?tab=whatsapp');
-        exit;
-    }
-
-    if ($action === 'test_whatsapp') {
-        $mobile = trim($_POST['test_mobile'] ?? '');
-        $msg = 'EduDash WhatsApp test — your setup is working. ' . date('H:i:s');
-        if (trim($_POST['whatsapp_api_token'] ?? '') !== '') {
-            setSetting($pdo, 'whatsapp_api_token', trim($_POST['whatsapp_api_token']));
+    if ($action === 'save_staff') {
+        $staffId = (int) ($_POST['staff_id'] ?? 0);
+        $username = trim((string) ($_POST['username'] ?? ''));
+        $name = trim((string) ($_POST['name'] ?? ''));
+        $role = (string) ($_POST['role'] ?? 'receptionist');
+        $status = ($_POST['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
+        $password = (string) ($_POST['password'] ?? '');
+        if (!isset(adminRoles()[$role])) {
+            $role = 'receptionist';
         }
-        foreach (['whatsapp_provider', 'whatsapp_phone_id', 'whatsapp_business_number', 'whatsapp_api_url'] as $k) {
-            if (isset($_POST[$k]) && $_POST[$k] !== '') {
-                setSetting($pdo, $k, trim($_POST[$k]));
+        if ($username === '' || $name === '') {
+            $_SESSION['error_msg'] = 'Name and username are required.';
+            header('Location: settings.php?tab=staff');
+            exit;
+        }
+        $dup = $pdo->prepare('SELECT id FROM admin_users WHERE username = ? AND id <> ?');
+        $dup->execute([$username, $staffId]);
+        if ($dup->fetch()) {
+            $_SESSION['error_msg'] = 'That username is already in use.';
+            header('Location: settings.php?tab=staff');
+            exit;
+        }
+        $selfId = (int) $_SESSION['admin_id'];
+        if ($staffId === $selfId) {
+            $role = 'admin';
+            $status = 'Active';
+        }
+        if ($staffId) {
+            $existing = $pdo->prepare('SELECT * FROM admin_users WHERE id = ?');
+            $existing->execute([$staffId]);
+            $row = $existing->fetch(PDO::FETCH_ASSOC);
+            if (!$row) {
+                $_SESSION['error_msg'] = 'Staff account not found.';
+                header('Location: settings.php?tab=staff');
+                exit;
             }
-        }
-        setSetting($pdo, 'whatsapp_enabled', '1');
-        $result = dispatchWhatsApp($pdo, $mobile, $msg);
-        if ($result['ok']) {
-            $_SESSION['success_msg'] = 'Test WhatsApp message sent to ' . $mobile;
+            $adminCount = (int) $pdo->query("SELECT COUNT(*) FROM admin_users WHERE role = 'admin' AND status = 'Active'")->fetchColumn();
+            if (($row['role'] ?? '') === 'admin' && ($row['status'] ?? '') === 'Active' && ($role !== 'admin' || $status === 'Inactive') && $adminCount <= 1) {
+                $_SESSION['error_msg'] = 'Keep at least one active Full Admin account.';
+                header('Location: settings.php?tab=staff');
+                exit;
+            }
+            $pdo->prepare('UPDATE admin_users SET username = ?, name = ?, role = ?, status = ? WHERE id = ?')
+                ->execute([$username, $name, $role, $status, $staffId]);
+            if ($password !== '') {
+                if (strlen($password) < 6 || strcasecmp($password, 'admin123') === 0) {
+                    $_SESSION['error_msg'] = 'New password must be at least 6 characters and not the default.';
+                    header('Location: settings.php?tab=staff');
+                    exit;
+                }
+                $pdo->prepare('UPDATE admin_users SET password = ?, must_change_password = 1 WHERE id = ?')
+                    ->execute([password_hash($password, PASSWORD_DEFAULT), $staffId]);
+            }
+            if ($staffId === $selfId) {
+                $_SESSION['admin_username'] = $username;
+                $_SESSION['admin_name'] = $name;
+            }
+            adminLogActivity($pdo, 'staff_updated', $username);
+            $_SESSION['success_msg'] = 'Staff account updated.';
         } else {
-            $_SESSION['error_msg'] = $result['error'];
+            if (strlen($password) < 6 || strcasecmp($password, 'admin123') === 0) {
+                $_SESSION['error_msg'] = 'Password must be at least 6 characters and not the default.';
+                header('Location: settings.php?tab=staff');
+                exit;
+            }
+            try {
+                $pdo->prepare('INSERT INTO admin_users (username, password, name, role, status, must_change_password) VALUES (?,?,?,?,?,1)')
+                    ->execute([$username, password_hash($password, PASSWORD_DEFAULT), $name, $role, $status]);
+            } catch (Throwable $e) {
+                $_SESSION['error_msg'] = 'Could not create the account. Ask SuperAdmin to check the database.';
+                header('Location: settings.php?tab=staff');
+                exit;
+            }
+            adminLogActivity($pdo, 'staff_created', $username);
+            $_SESSION['success_msg'] = 'Staff account created. They must change the password on first login.';
         }
-        header('Location: settings.php?tab=whatsapp');
+        header('Location: settings.php?tab=staff');
+        exit;
+    }
+
+    if ($action === 'delete_staff') {
+        $staffId = (int) ($_POST['staff_id'] ?? 0);
+        if ($staffId === (int) $_SESSION['admin_id']) {
+            $_SESSION['error_msg'] = 'You cannot delete your own account.';
+            header('Location: settings.php?tab=staff');
+            exit;
+        }
+        $existing = $pdo->prepare('SELECT * FROM admin_users WHERE id = ?');
+        $existing->execute([$staffId]);
+        $row = $existing->fetch(PDO::FETCH_ASSOC);
+        $adminCount = (int) $pdo->query("SELECT COUNT(*) FROM admin_users WHERE role = 'admin' AND status = 'Active'")->fetchColumn();
+        if ($row && ($row['role'] ?? '') === 'admin' && ($row['status'] ?? '') === 'Active' && $adminCount <= 1) {
+            $_SESSION['error_msg'] = 'Keep at least one active Full Admin account.';
+            header('Location: settings.php?tab=staff');
+            exit;
+        }
+        $pdo->prepare('DELETE FROM admin_users WHERE id = ?')->execute([$staffId]);
+        adminLogActivity($pdo, 'staff_deleted', $row['username'] ?? ('#' . $staffId));
+        $_SESSION['success_msg'] = 'Staff account removed.';
+        header('Location: settings.php?tab=staff');
         exit;
     }
 
@@ -288,47 +327,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    if ($action === 'save_database') {
-        $config = buildDatabaseSettingsFromPost($_POST);
-        if (!saveDbProfilesConfig($config)) {
-            $_SESSION['error_msg'] = 'Could not save database settings. Check write permission on the includes/ folder.';
-        } else {
-            $_SESSION['success_msg'] = 'Database settings saved. Refresh the page to apply the new connection.';
-        }
-        header('Location: settings.php?tab=database');
-        exit;
-    }
-
-    if ($action === 'test_db_online' || $action === 'test_db_offline') {
-        $profileKey = $action === 'test_db_online' ? 'online' : 'offline';
-        $profile = databaseProfileFromPost($_POST, $profileKey);
-        $test = testDbProfile($profile);
-        if ($test['ok']) {
-            $_SESSION['success_msg'] = ucfirst($profileKey) . ' database connected successfully (' . $test['latency_ms'] . ' ms).';
-        } else {
-            $_SESSION['error_msg'] = ucfirst($profileKey) . ' connection failed: ' . $test['error'];
-        }
-        header('Location: settings.php?tab=database');
-        exit;
-    }
 }
 
 require_once 'includes/header.php';
-$smtp = getSmtpSettings($pdo);
-$sms = getSmsSettings($pdo);
-$whatsapp = getWhatsAppSettings($pdo);
 $school = getSchoolProfile($pdo);
 $logoPreviewUrl = schoolBrandingUrl($school['logo'] ?? '', 'admin');
 $logoLightPreviewUrl = schoolBrandingUrl($school['logo_light'] ?? '', 'admin');
 $logoIconPreviewUrl = schoolBrandingUrl($school['logo_icon'] ?? '', 'admin');
 $faviconPreviewUrl = schoolBrandingUrl($school['favicon'] ?? '', 'admin');
-$dbSettings = getDatabaseSettingsForm();
-$dbActiveProfile = $db_active_profile ?? 'offline';
-$dbConnectionMode = $db_connection_mode ?? 'offline';
 $signatures = getAuthoritySignatures($pdo);
 $editSig = null;
 if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
     $editSig = getAuthoritySignatureById($pdo, (int) $_GET['edit']);
+}
+$galleryItems = $canManage ? getWebsiteGallery($pdo) : [];
+$staffUsers = [];
+$editStaff = null;
+if ($canManage && $activeTab === 'staff') {
+    $staffUsers = $pdo->query('SELECT id, username, name, role, status, must_change_password, created_at FROM admin_users ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    if (!empty($_GET['edit'])) {
+        foreach ($staffUsers as $su) {
+            if ((int) $su['id'] === (int) $_GET['edit']) {
+                $editStaff = $su;
+                break;
+            }
+        }
+    }
+}
+$activityPage = max(1, (int) ($_GET['p'] ?? 1));
+$activityPer = 50;
+$activityTotal = 0;
+$activityLogs = [];
+if ($canManage && $activeTab === 'activity') {
+    $activityTotal = adminCountActivityLogs($pdo);
+    $activityPages = max(1, (int) ceil($activityTotal / $activityPer));
+    if ($activityPage > $activityPages) {
+        $activityPage = $activityPages;
+    }
+    $activityLogs = adminGetActivityLogs($pdo, $activityPer, ($activityPage - 1) * $activityPer);
 }
 ?>
 <div class="content-top-bar">
@@ -347,6 +383,7 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
 
 <div class="settings-layout">
     <aside class="settings-vtabs" role="tablist">
+        <?php if ($canManage): ?>
         <a href="settings.php?tab=school" class="settings-vtab <?php echo $activeTab === 'school' ? 'active' : ''; ?>">
             <span class="settings-vtab-icon"><i class="fas fa-school"></i></span>
             <span class="settings-vtab-text"><strong>School Profile</strong><small>Name, address &amp; branding</small></span>
@@ -355,25 +392,22 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
             <span class="settings-vtab-icon"><i class="fas fa-signature"></i></span>
             <span class="settings-vtab-text"><strong>Signatures</strong><small>Principal &amp; authorities</small></span>
         </a>
-        <a href="settings.php?tab=email" class="settings-vtab <?php echo $activeTab === 'email' ? 'active' : ''; ?>">
-            <span class="settings-vtab-icon"><i class="fas fa-envelope"></i></span>
-            <span class="settings-vtab-text"><strong>Email SMTP</strong><small>Outgoing mail server</small></span>
+        <a href="settings.php?tab=gallery" class="settings-vtab <?php echo $activeTab === 'gallery' ? 'active' : ''; ?>">
+            <span class="settings-vtab-icon"><i class="fas fa-images"></i></span>
+            <span class="settings-vtab-text"><strong>Website Gallery</strong><small>Photos on the homepage</small></span>
         </a>
-        <a href="settings.php?tab=sms" class="settings-vtab <?php echo $activeTab === 'sms' ? 'active' : ''; ?>">
-            <span class="settings-vtab-icon"><i class="fas fa-sms"></i></span>
-            <span class="settings-vtab-text"><strong>SMS / MSG</strong><small>MSG91 &amp; SMS gateway</small></span>
+        <a href="settings.php?tab=staff" class="settings-vtab <?php echo $activeTab === 'staff' ? 'active' : ''; ?>">
+            <span class="settings-vtab-icon"><i class="fas fa-user-shield"></i></span>
+            <span class="settings-vtab-text"><strong>Staff Logins</strong><small>Admin users &amp; roles</small></span>
         </a>
-        <a href="settings.php?tab=whatsapp" class="settings-vtab <?php echo $activeTab === 'whatsapp' ? 'active' : ''; ?>">
-            <span class="settings-vtab-icon"><i class="fab fa-whatsapp"></i></span>
-            <span class="settings-vtab-text"><strong>WhatsApp</strong><small>Business API setup</small></span>
+        <a href="settings.php?tab=activity" class="settings-vtab <?php echo $activeTab === 'activity' ? 'active' : ''; ?>">
+            <span class="settings-vtab-icon"><i class="fas fa-clipboard-list"></i></span>
+            <span class="settings-vtab-text"><strong>Activity Log</strong><small>Sign-ins and changes</small></span>
         </a>
-        <a href="settings.php?tab=database" class="settings-vtab <?php echo $activeTab === 'database' ? 'active' : ''; ?>">
-            <span class="settings-vtab-icon"><i class="fas fa-database"></i></span>
-            <span class="settings-vtab-text"><strong>Database</strong><small>Online &amp; offline flow</small></span>
-        </a>
+        <?php endif; ?>
         <a href="settings.php?tab=password" class="settings-vtab <?php echo $activeTab === 'password' ? 'active' : ''; ?>">
             <span class="settings-vtab-icon"><i class="fas fa-lock"></i></span>
-            <span class="settings-vtab-text"><strong>Change Password</strong><small>Admin account security</small></span>
+            <span class="settings-vtab-text"><strong>Change Password</strong><small>Your account security</small></span>
         </a>
     </aside>
 
@@ -387,69 +421,97 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
             <form method="POST" class="settings-form" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="save_school">
                 <div class="settings-branding-block">
-                    <h4><i class="fas fa-palette"></i> Logo &amp; Favicon</h4>
-                    <p>Shown on the public website, admin sidebar, login pages, certificates, ID cards and browser tab.</p>
-                    <div class="settings-branding-grid">
-                        <div class="settings-brand-card">
-                            <label>School Logo</label>
-                            <div class="settings-brand-preview<?php echo $logoPreviewUrl ? ' has-image' : ''; ?>">
-                                <?php if ($logoPreviewUrl): ?>
-                                <img src="<?php echo htmlspecialchars($logoPreviewUrl); ?>" alt="School logo">
-                                <?php else: ?>
-                                <span class="settings-brand-placeholder"><i class="fas fa-image"></i> No logo</span>
+                    <h4><i class="fas fa-palette"></i> Logos</h4>
+                    <p>Drop an image or choose a file. Shown on the public website, admin sidebar, logins, certificates and browser tab.</p>
+                    <?php
+                    $logoSlots = [
+                        [
+                            'name' => 'school_logo',
+                            'remove' => 'remove_logo',
+                            'url' => $logoPreviewUrl,
+                            'title' => 'School logo',
+                            'desc' => 'Main mark for light backgrounds, certificates and the homepage header.',
+                            'hint' => 'PNG, JPG, WEBP or GIF · max 2MB',
+                            'accept' => 'image/png,image/jpeg,image/webp,image/gif',
+                            'tone' => 'light',
+                            'shape' => 'wide',
+                        ],
+                        [
+                            'name' => 'school_logo_light',
+                            'remove' => 'remove_logo_light',
+                            'url' => $logoLightPreviewUrl,
+                            'title' => 'Light logo',
+                            'desc' => 'White or light version for dark headers, hero and footer.',
+                            'hint' => 'PNG with transparency recommended · max 2MB',
+                            'accept' => 'image/png,image/jpeg,image/webp,image/gif',
+                            'tone' => 'dark',
+                            'shape' => 'wide',
+                        ],
+                        [
+                            'name' => 'school_logo_icon',
+                            'remove' => 'remove_logo_icon',
+                            'url' => $logoIconPreviewUrl,
+                            'title' => 'Logo icon',
+                            'desc' => 'Compact square mark for the navbar and mobile menu.',
+                            'hint' => 'Square PNG or ICO · max 512KB',
+                            'accept' => 'image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon,.ico',
+                            'tone' => 'light',
+                            'shape' => 'icon',
+                        ],
+                        [
+                            'name' => 'school_favicon',
+                            'remove' => 'remove_favicon',
+                            'url' => $faviconPreviewUrl,
+                            'title' => 'Favicon',
+                            'desc' => 'Small icon in the browser tab. 32×32 or 64×64 works best.',
+                            'hint' => 'ICO or PNG · max 512KB',
+                            'accept' => 'image/png,image/jpeg,image/x-icon,image/vnd.microsoft.icon,.ico',
+                            'tone' => 'light',
+                            'shape' => 'favicon',
+                        ],
+                    ];
+                    ?>
+                    <div class="sa-logo-grid">
+                        <?php foreach ($logoSlots as $slot):
+                            $hasImg = $slot['url'] !== '';
+                        ?>
+                        <article class="sa-logo-card tone-<?php echo htmlspecialchars($slot['tone']); ?> shape-<?php echo htmlspecialchars($slot['shape']); ?><?php echo $hasImg ? ' has-image' : ''; ?>" data-logo-card data-original="<?php echo htmlspecialchars($slot['url']); ?>">
+                            <div class="sa-logo-stage">
+                                <div class="sa-logo-frame" data-logo-frame>
+                                    <?php if ($hasImg): ?>
+                                    <img src="<?php echo htmlspecialchars($slot['url']); ?>" alt="<?php echo htmlspecialchars($slot['title']); ?>">
+                                    <?php else: ?>
+                                    <span class="sa-logo-empty">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Drop image here
+                                    </span>
+                                    <?php endif; ?>
+                                </div>
+                                <span class="sa-logo-status" data-logo-status><?php echo $hasImg ? 'Current' : 'Not set'; ?></span>
+                            </div>
+                            <div class="sa-logo-body">
+                                <div class="sa-logo-copy">
+                                    <strong><?php echo htmlspecialchars($slot['title']); ?></strong>
+                                    <p><?php echo htmlspecialchars($slot['desc']); ?></p>
+                                </div>
+                                <span class="sa-logo-hint"><?php echo htmlspecialchars($slot['hint']); ?></span>
+                                <div class="sa-logo-actions">
+                                    <label class="sa-logo-pick">
+                                        <input type="file" class="sa-logo-file" name="<?php echo htmlspecialchars($slot['name']); ?>" accept="<?php echo htmlspecialchars($slot['accept']); ?>" data-logo-input>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Choose image
+                                    </label>
+                                    <span class="sa-logo-filename" data-logo-name>No file chosen</span>
+                                </div>
+                                <?php if ($hasImg): ?>
+                                <label class="sa-logo-remove">
+                                    <input type="checkbox" name="<?php echo htmlspecialchars($slot['remove']); ?>" value="1" data-logo-remove>
+                                    Remove current image
+                                </label>
                                 <?php endif; ?>
                             </div>
-                            <input type="file" name="school_logo" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif">
-                            <span class="field-hint">Main logo for light backgrounds. PNG or JPG, max 2MB.</span>
-                            <?php if ($logoPreviewUrl): ?>
-                            <label class="settings-remove-check"><input type="checkbox" name="remove_logo" value="1"> Remove current logo</label>
-                            <?php endif; ?>
-                        </div>
-                        <div class="settings-brand-card">
-                            <label>Light Logo</label>
-                            <div class="settings-brand-preview is-dark-bg<?php echo $logoLightPreviewUrl ? ' has-image' : ''; ?>">
-                                <?php if ($logoLightPreviewUrl): ?>
-                                <img src="<?php echo htmlspecialchars($logoLightPreviewUrl); ?>" alt="Light logo">
-                                <?php else: ?>
-                                <span class="settings-brand-placeholder is-light"><i class="fas fa-image"></i> No light logo</span>
-                                <?php endif; ?>
-                            </div>
-                            <input type="file" name="school_logo_light" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif">
-                            <span class="field-hint">White or light version for dark headers, hero and footer. Max 2MB.</span>
-                            <?php if ($logoLightPreviewUrl): ?>
-                            <label class="settings-remove-check"><input type="checkbox" name="remove_logo_light" value="1"> Remove light logo</label>
-                            <?php endif; ?>
-                        </div>
-                        <div class="settings-brand-card">
-                            <label>Logo Icon</label>
-                            <div class="settings-brand-preview is-icon<?php echo $logoIconPreviewUrl ? ' has-image' : ''; ?>">
-                                <?php if ($logoIconPreviewUrl): ?>
-                                <img src="<?php echo htmlspecialchars($logoIconPreviewUrl); ?>" alt="Logo icon">
-                                <?php else: ?>
-                                <span class="settings-brand-placeholder"><i class="fas fa-shapes"></i> No icon</span>
-                                <?php endif; ?>
-                            </div>
-                            <input type="file" name="school_logo_icon" class="form-input" accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon,.ico">
-                            <span class="field-hint">Compact mark for navbar and mobile menu. Square, max 512KB.</span>
-                            <?php if ($logoIconPreviewUrl): ?>
-                            <label class="settings-remove-check"><input type="checkbox" name="remove_logo_icon" value="1"> Remove logo icon</label>
-                            <?php endif; ?>
-                        </div>
-                        <div class="settings-brand-card">
-                            <label>Favicon</label>
-                            <div class="settings-brand-preview is-favicon<?php echo $faviconPreviewUrl ? ' has-image' : ''; ?>">
-                                <?php if ($faviconPreviewUrl): ?>
-                                <img src="<?php echo htmlspecialchars($faviconPreviewUrl); ?>" alt="Favicon">
-                                <?php else: ?>
-                                <span class="settings-brand-placeholder"><i class="fas fa-star"></i> No favicon</span>
-                                <?php endif; ?>
-                            </div>
-                            <input type="file" name="school_favicon" class="form-input" accept="image/png,image/jpeg,image/x-icon,image/vnd.microsoft.icon,.ico">
-                            <span class="field-hint">ICO or PNG, max 512KB. Recommended 32×32 or 64×64.</span>
-                            <?php if ($faviconPreviewUrl): ?>
-                            <label class="settings-remove-check"><input type="checkbox" name="remove_favicon" value="1"> Remove current favicon</label>
-                            <?php endif; ?>
-                        </div>
+                        </article>
+                        <?php endforeach; ?>
                     </div>
                 </div>
                 <div class="form-grid form-grid-2">
@@ -507,32 +569,49 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
                 <form method="POST" class="settings-form" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="save_signature">
                     <input type="hidden" name="sig_id" value="<?php echo $editSig ? (int) $editSig['id'] : 0; ?>">
-                    <div class="settings-branding-grid">
-                        <div class="settings-brand-card">
-                            <label>Signature Image</label>
-                            <div class="settings-brand-preview<?php echo ($editSig && !empty($editSig['signature'])) ? ' has-image' : ''; ?>" style="background:#fff">
-                                <?php $editSigUrl = $editSig ? schoolBrandingUrl($editSig['signature'] ?? '', 'admin') : ''; ?>
-                                <?php if ($editSigUrl): ?>
-                                <img src="<?php echo htmlspecialchars($editSigUrl); ?>" alt="Signature">
-                                <?php else: ?>
-                                <span class="settings-brand-placeholder"><i class="fas fa-signature"></i> No signature</span>
-                                <?php endif; ?>
-                            </div>
-                            <input type="file" name="sig_image" class="form-input" accept="image/png,image/jpeg,image/webp"<?php echo $editSig ? '' : ' required'; ?>>
-                            <span class="field-hint">PNG (transparent) recommended, max 2MB.<?php echo $editSig ? ' Leave blank to keep current.' : ''; ?></span>
-                        </div>
-                        <div style="flex:1;min-width:260px">
-                            <div class="form-grid form-grid-1">
-                                <div class="form-field"><label>Signatory Name</label><input type="text" name="sig_name" class="form-input" value="<?php echo htmlspecialchars($editSig['name'] ?? $school['principal'] ?? ''); ?>" placeholder="e.g. Dr. A. Sharma" required></div>
-                                <div class="form-field"><label>Designation</label><input type="text" name="sig_designation" class="form-input" value="<?php echo htmlspecialchars($editSig['designation'] ?? 'Principal'); ?>" placeholder="e.g. Principal / Vice Principal / Exam Controller" required></div>
-                                <div class="form-grid form-grid-2" style="padding:0">
-                                    <div class="form-field"><label>Display Order</label><input type="number" name="sig_sort_order" class="form-input" value="<?php echo (int) ($editSig['sort_order'] ?? 0); ?>"></div>
-                                    <div class="form-field"><label>Status</label><select name="sig_status" class="form-input form-select"><option value="Active" <?php echo (($editSig['status'] ?? 'Active') === 'Active') ? 'selected' : ''; ?>>Active</option><option value="Inactive" <?php echo (($editSig['status'] ?? '') === 'Inactive') ? 'selected' : ''; ?>>Inactive</option></select></div>
+                    <?php
+                    $editSigUrl = $editSig ? schoolBrandingUrl($editSig['signature'] ?? '', 'admin') : '';
+                    $hasSigImg = $editSigUrl !== '';
+                    ?>
+                    <div class="sa-logo-grid">
+                        <article class="sa-logo-card tone-light shape-wide<?php echo $hasSigImg ? ' has-image' : ''; ?>" data-logo-card data-original="<?php echo htmlspecialchars($editSigUrl); ?>">
+                            <div class="sa-logo-stage">
+                                <div class="sa-logo-frame" data-logo-frame>
+                                    <?php if ($hasSigImg): ?>
+                                    <img src="<?php echo htmlspecialchars($editSigUrl); ?>" alt="Signature">
+                                    <?php else: ?>
+                                    <span class="sa-logo-empty">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Drop signature here
+                                    </span>
+                                    <?php endif; ?>
                                 </div>
-                                <label class="settings-toggle"><input type="checkbox" name="sig_make_default" value="1" <?php echo ($editSig && (int) $editSig['is_default'] === 1) ? 'checked' : (empty($signatures) ? 'checked' : ''); ?>><span>Set as default signatory (used on ID cards &amp; receipts)</span></label>
+                                <span class="sa-logo-status" data-logo-status><?php echo $hasSigImg ? 'Current' : 'Not set'; ?></span>
                             </div>
-                        </div>
+                            <div class="sa-logo-body">
+                                <div class="sa-logo-copy">
+                                    <strong>Signature image</strong>
+                                    <p>Transparent PNG looks best on ID cards, certificates and receipts.</p>
+                                </div>
+                                <span class="sa-logo-hint">PNG, JPG or WEBP · max 2MB<?php echo $editSig ? ' · leave blank to keep current' : ''; ?></span>
+                                <div class="sa-logo-actions">
+                                    <label class="sa-logo-pick">
+                                        <input type="file" class="sa-logo-file" name="sig_image" accept="image/png,image/jpeg,image/webp" data-logo-input<?php echo $editSig ? '' : ' required'; ?>>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Choose image
+                                    </label>
+                                    <span class="sa-logo-filename" data-logo-name>No file chosen</span>
+                                </div>
+                            </div>
+                        </article>
                     </div>
+                    <div class="form-grid form-grid-2">
+                        <div class="form-field"><label>Signatory Name</label><input type="text" name="sig_name" class="form-input" value="<?php echo htmlspecialchars($editSig['name'] ?? $school['principal'] ?? ''); ?>" placeholder="e.g. Dr. A. Sharma" required></div>
+                        <div class="form-field"><label>Designation</label><input type="text" name="sig_designation" class="form-input" value="<?php echo htmlspecialchars($editSig['designation'] ?? 'Principal'); ?>" placeholder="e.g. Principal / Vice Principal / Exam Controller" required></div>
+                        <div class="form-field"><label>Display Order</label><input type="number" name="sig_sort_order" class="form-input" value="<?php echo (int) ($editSig['sort_order'] ?? 0); ?>"></div>
+                        <div class="form-field"><label>Status</label><select name="sig_status" class="form-input form-select"><option value="Active" <?php echo (($editSig['status'] ?? 'Active') === 'Active') ? 'selected' : ''; ?>>Active</option><option value="Inactive" <?php echo (($editSig['status'] ?? '') === 'Inactive') ? 'selected' : ''; ?>>Inactive</option></select></div>
+                    </div>
+                    <label class="settings-toggle"><input type="checkbox" name="sig_make_default" value="1" <?php echo ($editSig && (int) $editSig['is_default'] === 1) ? 'checked' : (empty($signatures) ? 'checked' : ''); ?>><span>Set as default signatory (used on ID cards &amp; receipts)</span></label>
                     <div class="settings-form-actions">
                         <?php if ($editSig): ?><a href="settings.php?tab=signatures" class="btn-header-action btn-header-outline"><i class="fas fa-times"></i> Cancel</a><?php endif; ?>
                         <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> <?php echo $editSig ? 'Update Signatory' : 'Add Signatory'; ?></button>
@@ -542,235 +621,275 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
         </div>
         <?php endif; ?>
 
-        <?php if ($activeTab === 'email'): ?>
+        <?php if ($activeTab === 'gallery'): ?>
         <div class="settings-panel active">
             <div class="settings-panel-head">
-                <h3>Email SMTP Setup</h3>
-                <p>Configure outgoing email for receipts, alerts, and notifications.</p>
+                <h3>Website Gallery</h3>
+                <p>These photos appear on the public homepage. If none are uploaded, the site keeps the default sample images.</p>
             </div>
-            <form method="POST" class="settings-form">
-                <input type="hidden" name="action" value="save_smtp">
-                <label class="settings-toggle">
-                    <input type="checkbox" name="smtp_enabled" value="1" <?php echo $smtp['enabled'] === '1' ? 'checked' : ''; ?>>
-                    <span>Enable SMTP email</span>
-                </label>
-                <div class="form-grid form-grid-2">
-                    <div class="form-field"><label>SMTP Host</label><input type="text" name="smtp_host" class="form-input" value="<?php echo htmlspecialchars($smtp['host']); ?>" placeholder="smtp.gmail.com"></div>
-                    <div class="form-field"><label>SMTP Port</label><input type="number" name="smtp_port" class="form-input" value="<?php echo htmlspecialchars($smtp['port']); ?>"></div>
-                    <div class="form-field"><label>Encryption</label><select name="smtp_encryption" class="form-input form-select"><option value="tls" <?php echo $smtp['encryption'] === 'tls' ? 'selected' : ''; ?>>TLS</option><option value="ssl" <?php echo $smtp['encryption'] === 'ssl' ? 'selected' : ''; ?>>SSL</option><option value="none" <?php echo $smtp['encryption'] === 'none' ? 'selected' : ''; ?>>None</option></select></div>
-                    <div class="form-field"><label>Username</label><input type="text" name="smtp_username" class="form-input" value="<?php echo htmlspecialchars($smtp['username']); ?>"></div>
-                    <div class="form-field"><label>Password</label><input type="password" name="smtp_password" class="form-input" placeholder="<?php echo $smtp['password'] ? '•••••••• (leave blank to keep)' : 'SMTP password'; ?>" autocomplete="new-password"></div>
-                    <div class="form-field"><label>From Email</label><input type="email" name="smtp_from_email" class="form-input" value="<?php echo htmlspecialchars($smtp['from_email']); ?>" placeholder="noreply@school.com"></div>
-                    <div class="form-field"><label>From Name</label><input type="text" name="smtp_from_name" class="form-input" value="<?php echo htmlspecialchars($smtp['from_name']); ?>"></div>
-                </div>
-                <div class="settings-form-actions">
-                    <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save SMTP Settings</button>
-                </div>
-            </form>
-            <div class="settings-test-box">
-                <h4><i class="fas fa-paper-plane"></i> Send Test Email</h4>
-                <form method="POST" class="category-add-row">
-                    <input type="hidden" name="action" value="test_smtp">
-                    <input type="hidden" name="smtp_host" value="<?php echo htmlspecialchars($smtp['host']); ?>">
-                    <input type="hidden" name="smtp_port" value="<?php echo htmlspecialchars($smtp['port']); ?>">
-                    <input type="hidden" name="smtp_encryption" value="<?php echo htmlspecialchars($smtp['encryption']); ?>">
-                    <input type="hidden" name="smtp_username" value="<?php echo htmlspecialchars($smtp['username']); ?>">
-                    <input type="hidden" name="smtp_from_email" value="<?php echo htmlspecialchars($smtp['from_email']); ?>">
-                    <input type="hidden" name="smtp_from_name" value="<?php echo htmlspecialchars($smtp['from_name']); ?>">
-                    <div class="form-field form-field-grow"><label>Test recipient</label><input type="email" name="test_email" class="form-input" value="<?php echo htmlspecialchars($smtp['from_email']); ?>" required></div>
-                    <div class="form-field category-add-btn-wrap"><label>&nbsp;</label><button type="submit" class="btn-header-action btn-header-outline category-add-btn">Send Test</button></div>
-                </form>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <?php if ($activeTab === 'sms'): ?>
-        <div class="settings-panel active">
-            <div class="settings-panel-head">
-                <h3>SMS / MSG Setup</h3>
-                <p>Connect MSG91 or a custom SMS gateway for fee and attendance alerts.</p>
-            </div>
-            <form method="POST" class="settings-form">
-                <input type="hidden" name="action" value="save_sms">
-                <label class="settings-toggle">
-                    <input type="checkbox" name="sms_enabled" value="1" <?php echo $sms['enabled'] === '1' ? 'checked' : ''; ?>>
-                    <span>Enable SMS notifications</span>
-                </label>
-                <div class="form-grid form-grid-2">
-                    <div class="form-field"><label>Provider</label><select name="sms_provider" class="form-input form-select"><option value="MSG91" <?php echo $sms['provider'] === 'MSG91' ? 'selected' : ''; ?>>MSG91</option><option value="Custom" <?php echo $sms['provider'] === 'Custom' ? 'selected' : ''; ?>>Custom</option></select></div>
-                    <div class="form-field"><label>Auth Key / API Key</label><input type="password" name="sms_api_key" class="form-input" placeholder="<?php echo $sms['api_key'] ? '••••••••' : 'Your MSG91 auth key'; ?>"></div>
-                    <div class="form-field"><label>Sender ID</label><input type="text" name="sms_sender_id" class="form-input" value="<?php echo htmlspecialchars($sms['sender_id']); ?>" maxlength="6" placeholder="EDUDSH"></div>
-                    <div class="form-field"><label>Route</label><input type="text" name="sms_route" class="form-input" value="<?php echo htmlspecialchars($sms['route']); ?>" placeholder="4"></div>
-                    <div class="form-field form-field-full"><label>Custom API URL (optional)</label><input type="text" name="sms_api_url" class="form-input" value="<?php echo htmlspecialchars($sms['api_url']); ?>" placeholder="https://api.example.com/sms?mobile={mobile}&msg={message}&key={api_key}"></div>
-                </div>
-                <div class="settings-form-actions">
-                    <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save SMS Settings</button>
-                </div>
-            </form>
-            <div class="settings-test-box">
-                <h4><i class="fas fa-mobile-alt"></i> Send Test SMS</h4>
-                <form method="POST" class="category-add-row">
-                    <input type="hidden" name="action" value="test_sms">
-                    <input type="hidden" name="sms_provider" value="<?php echo htmlspecialchars($sms['provider']); ?>">
-                    <input type="hidden" name="sms_sender_id" value="<?php echo htmlspecialchars($sms['sender_id']); ?>">
-                    <input type="hidden" name="sms_route" value="<?php echo htmlspecialchars($sms['route']); ?>">
-                    <input type="hidden" name="sms_api_url" value="<?php echo htmlspecialchars($sms['api_url']); ?>">
-                    <div class="form-field form-field-grow"><label>Mobile number</label><input type="text" name="test_mobile" class="form-input" placeholder="9876543210" required></div>
-                    <div class="form-field category-add-btn-wrap"><label>&nbsp;</label><button type="submit" class="btn-header-action btn-header-outline category-add-btn">Send Test</button></div>
-                </form>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <?php if ($activeTab === 'whatsapp'): ?>
-        <div class="settings-panel active">
-            <div class="settings-panel-head">
-                <h3>WhatsApp Setup</h3>
-                <p>Meta Cloud API or custom webhook for WhatsApp Business messages.</p>
-            </div>
-            <form method="POST" class="settings-form">
-                <input type="hidden" name="action" value="save_whatsapp">
-                <label class="settings-toggle">
-                    <input type="checkbox" name="whatsapp_enabled" value="1" <?php echo $whatsapp['enabled'] === '1' ? 'checked' : ''; ?>>
-                    <span>Enable WhatsApp notifications</span>
-                </label>
-                <div class="form-grid form-grid-2">
-                    <div class="form-field"><label>Provider</label><select name="whatsapp_provider" class="form-input form-select"><option value="Meta Cloud API" <?php echo $whatsapp['provider'] === 'Meta Cloud API' ? 'selected' : ''; ?>>Meta Cloud API</option><option value="Custom" <?php echo $whatsapp['provider'] === 'Custom' ? 'selected' : ''; ?>>Custom</option></select></div>
-                    <div class="form-field"><label>Business Number</label><input type="text" name="whatsapp_business_number" class="form-input" value="<?php echo htmlspecialchars($whatsapp['business_number']); ?>" placeholder="+91XXXXXXXXXX"></div>
-                    <div class="form-field"><label>Phone Number ID</label><input type="text" name="whatsapp_phone_id" class="form-input" value="<?php echo htmlspecialchars($whatsapp['phone_id']); ?>" placeholder="Meta Phone Number ID"></div>
-                    <div class="form-field"><label>Permanent Access Token</label><input type="password" name="whatsapp_api_token" class="form-input" placeholder="<?php echo $whatsapp['api_token'] ? '••••••••' : 'WhatsApp API token'; ?>"></div>
-                    <div class="form-field form-field-full"><label>Custom API URL (optional)</label><input type="text" name="whatsapp_api_url" class="form-input" value="<?php echo htmlspecialchars($whatsapp['api_url']); ?>" placeholder="https://your-api.com/wa?to={mobile}&text={message}&token={token}"></div>
-                </div>
-                <div class="settings-form-actions">
-                    <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save WhatsApp Settings</button>
-                </div>
-            </form>
-            <div class="settings-test-box">
-                <h4><i class="fab fa-whatsapp"></i> Send Test Message</h4>
-                <form method="POST" class="category-add-row">
-                    <input type="hidden" name="action" value="test_whatsapp">
-                    <input type="hidden" name="whatsapp_provider" value="<?php echo htmlspecialchars($whatsapp['provider']); ?>">
-                    <input type="hidden" name="whatsapp_phone_id" value="<?php echo htmlspecialchars($whatsapp['phone_id']); ?>">
-                    <input type="hidden" name="whatsapp_business_number" value="<?php echo htmlspecialchars($whatsapp['business_number']); ?>">
-                    <input type="hidden" name="whatsapp_api_url" value="<?php echo htmlspecialchars($whatsapp['api_url']); ?>">
-                    <div class="form-field form-field-grow"><label>Mobile (with country code)</label><input type="text" name="test_mobile" class="form-input" placeholder="919876543210" required></div>
-                    <div class="form-field category-add-btn-wrap"><label>&nbsp;</label><button type="submit" class="btn-header-action btn-header-outline category-add-btn">Send Test</button></div>
-                </form>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <?php if ($activeTab === 'database'): ?>
-        <div class="settings-panel active">
-            <div class="settings-panel-head">
-                <h3>Online &amp; Offline Database</h3>
-                <p>Configure cloud (online) and local XAMPP (offline) databases. Use <strong>Auto</strong> to connect online when internet is available and fall back to local when offline.</p>
-            </div>
-
-            <div class="db-flow-status">
-                <div class="db-flow-status-card <?php echo $dbActiveProfile === 'online' ? 'is-online' : 'is-offline'; ?>">
-                    <span class="db-flow-status-icon"><i class="fas fa-circle"></i></span>
+            <div class="gallery-admin-grid">
+                <?php if (!$galleryItems): ?>
+                <div class="sig-empty"><i class="fas fa-images"></i><p>No gallery photos yet. Add the first one below.</p></div>
+                <?php else: foreach ($galleryItems as $g):
+                    $gUrl = websiteGalleryUrl($g['path'], 'admin');
+                ?>
+                <article class="gallery-admin-card">
+                    <img src="<?php echo htmlspecialchars($gUrl); ?>" alt="<?php echo htmlspecialchars($g['title']); ?>">
                     <div>
-                        <small>Currently connected</small>
-                        <strong><?php echo $dbActiveProfile === 'online' ? 'Online Database' : 'Offline Database'; ?></strong>
-                        <em>Mode: <?php echo htmlspecialchars(ucfirst($dbConnectionMode)); ?></em>
+                        <strong><?php echo htmlspecialchars($g['title']); ?></strong>
+                        <form method="POST" onsubmit="return confirm('Remove this photo?');">
+                            <input type="hidden" name="action" value="delete_gallery">
+                            <input type="hidden" name="gallery_path" value="<?php echo htmlspecialchars($g['path']); ?>">
+                            <button type="submit" class="sig-btn sig-btn-danger"><i class="fas fa-trash"></i> Remove</button>
+                        </form>
                     </div>
-                </div>
+                </article>
+                <?php endforeach; endif; ?>
             </div>
-
-            <div class="db-flow-steps">
-                <div class="db-flow-step">
-                    <span class="db-flow-num">1</span>
-                    <div><strong>Online DB</strong><p>Hosting / cloud MySQL — shared when internet works</p></div>
-                </div>
-                <div class="db-flow-arrow"><i class="fas fa-arrows-left-right"></i></div>
-                <div class="db-flow-step is-auto">
-                    <span class="db-flow-num">2</span>
-                    <div><strong>Auto Mode</strong><p>Tries online first, switches to local offline DB</p></div>
-                </div>
-                <div class="db-flow-arrow"><i class="fas fa-arrow-right"></i></div>
-                <div class="db-flow-step">
-                    <span class="db-flow-num">3</span>
-                    <div><strong>Offline DB</strong><p>Local XAMPP MySQL — works without internet</p></div>
-                </div>
+            <div class="settings-branding-block">
+                <h4><i class="fas fa-plus"></i> Add photo</h4>
+                <form method="POST" class="settings-form" enctype="multipart/form-data">
+                    <input type="hidden" name="action" value="add_gallery">
+                    <div class="sa-logo-grid">
+                        <article class="sa-logo-card tone-light shape-wide" data-logo-card data-original="">
+                            <div class="sa-logo-stage">
+                                <div class="sa-logo-frame" data-logo-frame>
+                                    <span class="sa-logo-empty">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Drop photo here
+                                    </span>
+                                </div>
+                                <span class="sa-logo-status" data-logo-status>Not set</span>
+                            </div>
+                            <div class="sa-logo-body">
+                                <div class="sa-logo-copy">
+                                    <strong>Gallery photo</strong>
+                                    <p>Shown in the School Memories section on the homepage.</p>
+                                </div>
+                                <span class="sa-logo-hint">JPG, PNG, WEBP or GIF · max 2MB</span>
+                                <div class="sa-logo-actions">
+                                    <label class="sa-logo-pick">
+                                        <input type="file" class="sa-logo-file" name="gallery_image" accept="image/jpeg,image/png,image/webp,image/gif" data-logo-input required>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Choose image
+                                    </label>
+                                    <span class="sa-logo-filename" data-logo-name>No file chosen</span>
+                                </div>
+                            </div>
+                        </article>
+                    </div>
+                    <div class="form-field"><label>Caption</label><input type="text" name="gallery_title" class="form-input" placeholder="e.g. Annual Day"></div>
+                    <div class="settings-form-actions"><button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-upload"></i> Add to gallery</button></div>
+                </form>
             </div>
-
-            <form method="POST" class="settings-form" id="dbSettingsForm">
-                <input type="hidden" name="action" value="save_database">
-
-                <div class="db-mode-picker">
-                    <label class="db-mode-option<?php echo $dbSettings['mode'] === 'auto' ? ' active' : ''; ?>">
-                        <input type="radio" name="db_mode" value="auto" <?php echo $dbSettings['mode'] === 'auto' ? 'checked' : ''; ?>>
-                        <strong>Auto (Recommended)</strong>
-                        <span>Online when available → offline fallback</span>
-                    </label>
-                    <label class="db-mode-option<?php echo $dbSettings['mode'] === 'online' ? ' active' : ''; ?>">
-                        <input type="radio" name="db_mode" value="online" <?php echo $dbSettings['mode'] === 'online' ? 'checked' : ''; ?>>
-                        <strong>Online Only</strong>
-                        <span>Always use cloud server</span>
-                    </label>
-                    <label class="db-mode-option<?php echo $dbSettings['mode'] === 'offline' ? ' active' : ''; ?>">
-                        <input type="radio" name="db_mode" value="offline" <?php echo $dbSettings['mode'] === 'offline' ? 'checked' : ''; ?>>
-                        <strong>Offline Only</strong>
-                        <span>Always use local XAMPP</span>
-                    </label>
-                </div>
-
-                <div class="db-profile-grid">
-                    <div class="db-profile-card">
-                        <div class="db-profile-head is-online">
-                            <h4><i class="fas fa-cloud"></i> Online Database</h4>
-                            <p>Remote hosting / VPS / cloud MySQL</p>
-                        </div>
-                        <div class="form-grid form-grid-2">
-                            <div class="form-field form-field-full"><label>Label</label><input type="text" name="db_online_label" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['label']); ?>"></div>
-                            <div class="form-field"><label>Host</label><input type="text" name="db_online_host" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['host']); ?>" placeholder="db.yourhost.com"></div>
-                            <div class="form-field"><label>Port</label><input type="number" name="db_online_port" class="form-input" value="<?php echo (int) $dbSettings['online']['port']; ?>"></div>
-                            <div class="form-field"><label>Database Name</label><input type="text" name="db_online_dbname" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['dbname']); ?>"></div>
-                            <div class="form-field"><label>Username</label><input type="text" name="db_online_username" class="form-input" value="<?php echo htmlspecialchars($dbSettings['online']['username']); ?>"></div>
-                            <div class="form-field form-field-full"><label>Password</label><input type="password" name="db_online_password" class="form-input" placeholder="<?php echo $dbSettings['online']['password'] !== '' ? '••••••••' : 'Database password'; ?>" autocomplete="new-password"></div>
-                        </div>
-                        <button type="submit" formaction="settings.php?tab=database" formmethod="POST" name="action" value="test_db_online" class="btn-header-action btn-header-outline"><i class="fas fa-plug"></i> Test Online Connection</button>
-                    </div>
-
-                    <div class="db-profile-card">
-                        <div class="db-profile-head is-offline">
-                            <h4><i class="fas fa-server"></i> Offline Database</h4>
-                            <p>Local XAMPP / WAMP on this computer</p>
-                        </div>
-                        <div class="form-grid form-grid-2">
-                            <div class="form-field form-field-full"><label>Label</label><input type="text" name="db_offline_label" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['label']); ?>"></div>
-                            <div class="form-field"><label>Host</label><input type="text" name="db_offline_host" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['host']); ?>" placeholder="localhost"></div>
-                            <div class="form-field"><label>Port</label><input type="number" name="db_offline_port" class="form-input" value="<?php echo (int) $dbSettings['offline']['port']; ?>"></div>
-                            <div class="form-field"><label>Database Name</label><input type="text" name="db_offline_dbname" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['dbname']); ?>"></div>
-                            <div class="form-field"><label>Username</label><input type="text" name="db_offline_username" class="form-input" value="<?php echo htmlspecialchars($dbSettings['offline']['username']); ?>"></div>
-                            <div class="form-field form-field-full"><label>Password</label><input type="password" name="db_offline_password" class="form-input" placeholder="<?php echo $dbSettings['offline']['password'] !== '' ? '••••••••' : 'Usually empty on XAMPP'; ?>" autocomplete="new-password"></div>
-                        </div>
-                        <button type="submit" formaction="settings.php?tab=database" formmethod="POST" name="action" value="test_db_offline" class="btn-header-action btn-header-outline"><i class="fas fa-plug"></i> Test Offline Connection</button>
-                    </div>
-                </div>
-
-                <div class="settings-info-box">
-                    <i class="fas fa-info-circle"></i>
-                    <div>
-                        <strong>How it works</strong><br>
-                        Settings are saved in <code>includes/db_profiles.local.php</code>. In <strong>Auto</strong> mode: on your <strong>local PC (XAMPP)</strong> the offline database is used; on the <strong>live server</strong> the online database is used. If the preferred connection fails, it falls back to the other profile.
-                    </div>
-                </div>
-
-                <div class="settings-form-actions">
-                    <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> Save Database Settings</button>
-                </div>
-            </form>
         </div>
-        <script>
-        document.querySelectorAll('.db-mode-option input').forEach(function (radio) {
-            radio.addEventListener('change', function () {
-                document.querySelectorAll('.db-mode-option').forEach(function (el) { el.classList.remove('active'); });
-                radio.closest('.db-mode-option').classList.add('active');
-            });
-        });
-        </script>
+        <?php endif; ?>
+
+        <?php if ($activeTab === 'staff'):
+            $roleMeta = [
+                'admin' => ['icon' => 'fa-crown', 'tone' => 'emerald', 'desc' => 'Every enabled module'],
+                'accountant' => ['icon' => 'fa-calculator', 'tone' => 'amber', 'desc' => 'Fees & staff salary'],
+                'academic' => ['icon' => 'fa-book-open', 'tone' => 'sky', 'desc' => 'Academic, exams, attendance'],
+                'receptionist' => ['icon' => 'fa-headset', 'tone' => 'violet', 'desc' => 'Students & website enquiries'],
+            ];
+            $staffActive = count(array_filter($staffUsers, fn($u) => ($u['status'] ?? '') === 'Active'));
+            $staffMustChange = count(array_filter($staffUsers, fn($u) => !empty($u['must_change_password'])));
+            $isEditingSelf = $editStaff && (int) $editStaff['id'] === (int) $_SESSION['admin_id'];
+        ?>
+        <div class="settings-panel active">
+            <div class="settings-panel-head staff-panel-head">
+                <div>
+                    <h3>Staff Logins</h3>
+                    <p>Extra school-admin accounts with role-based access. Full Admin sees every enabled module.</p>
+                </div>
+                <?php if (!$editStaff): ?>
+                <a href="#staff-form" class="btn-header-action btn-header-primary"><i class="fas fa-user-plus"></i> Add login</a>
+                <?php endif; ?>
+            </div>
+
+            <div class="staff-stat-strip">
+                <div class="staff-stat">
+                    <span class="staff-stat-ico is-total"><i class="fas fa-users"></i></span>
+                    <div><em>Total logins</em><strong><?php echo count($staffUsers); ?></strong></div>
+                </div>
+                <div class="staff-stat">
+                    <span class="staff-stat-ico is-active"><i class="fas fa-check-circle"></i></span>
+                    <div><em>Active</em><strong><?php echo $staffActive; ?></strong></div>
+                </div>
+                <div class="staff-stat">
+                    <span class="staff-stat-ico is-warn"><i class="fas fa-key"></i></span>
+                    <div><em>Must change password</em><strong><?php echo $staffMustChange; ?></strong></div>
+                </div>
+            </div>
+
+            <div class="staff-role-guide">
+                <?php foreach (adminRoles() as $rk => $rm):
+                    $meta = $roleMeta[$rk] ?? ['icon' => 'fa-user', 'tone' => 'slate', 'desc' => ''];
+                ?>
+                <div class="staff-role-chip tone-<?php echo htmlspecialchars($meta['tone']); ?>">
+                    <i class="fas <?php echo htmlspecialchars($meta['icon']); ?>"></i>
+                    <div>
+                        <strong><?php echo htmlspecialchars($rm['label']); ?></strong>
+                        <span><?php echo htmlspecialchars($meta['desc']); ?></span>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+
+            <div class="staff-list-head">
+                <h4>Accounts</h4>
+                <span><?php echo count($staffUsers); ?> login<?php echo count($staffUsers) === 1 ? '' : 's'; ?></span>
+            </div>
+
+            <?php if (!$staffUsers): ?>
+            <div class="staff-empty">
+                <i class="fas fa-user-shield"></i>
+                <p>No staff logins yet. Create the first account below.</p>
+            </div>
+            <?php else: ?>
+            <div class="staff-card-list">
+                <?php foreach ($staffUsers as $su):
+                    $display = trim((string) ($su['name'] ?? '')) ?: (string) $su['username'];
+                    $roleKey = (string) ($su['role'] ?? 'admin');
+                    $meta = $roleMeta[$roleKey] ?? ['icon' => 'fa-user', 'tone' => 'slate', 'desc' => ''];
+                    $isYou = (int) $su['id'] === (int) $_SESSION['admin_id'];
+                    $isActive = ($su['status'] ?? 'Active') === 'Active';
+                    $isEditing = $editStaff && (int) $editStaff['id'] === (int) $su['id'];
+                ?>
+                <article class="staff-card<?php echo $isEditing ? ' is-editing' : ''; ?><?php echo !$isActive ? ' is-inactive' : ''; ?>">
+                    <div class="staff-card-main">
+                        <span class="staff-avatar tone-<?php echo htmlspecialchars($meta['tone']); ?>"><?php echo htmlspecialchars(adminInitials($display)); ?></span>
+                        <div class="staff-card-info">
+                            <div class="staff-card-title">
+                                <strong><?php echo htmlspecialchars($display); ?></strong>
+                                <?php if ($isYou): ?><span class="staff-pill is-you">You</span><?php endif; ?>
+                                <?php if (!empty($su['must_change_password'])): ?><span class="staff-pill is-warn">Password pending</span><?php endif; ?>
+                            </div>
+                            <div class="staff-card-meta">
+                                <span><i class="fas fa-at"></i> <?php echo htmlspecialchars($su['username']); ?></span>
+                                <span class="staff-role-tag tone-<?php echo htmlspecialchars($meta['tone']); ?>">
+                                    <i class="fas <?php echo htmlspecialchars($meta['icon']); ?>"></i>
+                                    <?php echo htmlspecialchars(adminRoleLabel($roleKey)); ?>
+                                </span>
+                                <span class="staff-status <?php echo $isActive ? 'is-on' : 'is-off'; ?>">
+                                    <i class="fas fa-circle"></i> <?php echo htmlspecialchars($su['status'] ?? 'Active'); ?>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="staff-card-actions">
+                        <a href="settings.php?tab=staff&amp;edit=<?php echo (int) $su['id']; ?>#staff-form" class="staff-action-btn" title="Edit">
+                            <i class="fas fa-pen"></i><span>Edit</span>
+                        </a>
+                        <?php if (!$isYou): ?>
+                        <form method="POST" onsubmit="return confirm('Delete this login permanently?');">
+                            <input type="hidden" name="action" value="delete_staff">
+                            <input type="hidden" name="staff_id" value="<?php echo (int) $su['id']; ?>">
+                            <button type="submit" class="staff-action-btn is-danger" title="Delete">
+                                <i class="fas fa-trash"></i><span>Delete</span>
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                    </div>
+                </article>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
+            <div class="staff-form-card" id="staff-form">
+                <div class="staff-form-head">
+                    <div class="staff-form-head-icon">
+                        <i class="fas fa-<?php echo $editStaff ? 'user-edit' : 'user-plus'; ?>"></i>
+                    </div>
+                    <div>
+                        <h4><?php echo $editStaff ? 'Edit account' : 'Add staff login'; ?></h4>
+                        <p><?php echo $editStaff
+                            ? 'Update details for <strong>' . htmlspecialchars(trim((string) ($editStaff['name'] ?? '')) ?: (string) $editStaff['username']) . '</strong>.'
+                            : 'They will sign in at the School Admin login page.'; ?></p>
+                    </div>
+                </div>
+                <form method="POST" class="settings-form">
+                    <input type="hidden" name="action" value="save_staff">
+                    <input type="hidden" name="staff_id" value="<?php echo $editStaff ? (int) $editStaff['id'] : 0; ?>">
+                    <div class="form-grid form-grid-2">
+                        <div class="form-field">
+                            <label>Display name</label>
+                            <input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($editStaff['name'] ?? ''); ?>" placeholder="e.g. Priya Sharma" required>
+                        </div>
+                        <div class="form-field">
+                            <label>Username</label>
+                            <input type="text" name="username" class="form-input" value="<?php echo htmlspecialchars($editStaff['username'] ?? ''); ?>" placeholder="e.g. priya" required autocomplete="off">
+                        </div>
+                        <div class="form-field">
+                            <label>Role</label>
+                            <select name="role" class="form-input form-select" <?php echo $isEditingSelf ? 'disabled' : ''; ?>>
+                                <?php foreach (adminRoles() as $rk => $rm): ?>
+                                <option value="<?php echo htmlspecialchars($rk); ?>" <?php echo (($editStaff['role'] ?? 'receptionist') === $rk) ? 'selected' : ''; ?>><?php echo htmlspecialchars($rm['label']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <?php if ($isEditingSelf): ?>
+                            <input type="hidden" name="role" value="admin">
+                            <span class="field-hint">You cannot change your own role.</span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="form-field">
+                            <label>Status</label>
+                            <select name="status" class="form-input form-select" <?php echo $isEditingSelf ? 'disabled' : ''; ?>>
+                                <option value="Active" <?php echo (($editStaff['status'] ?? 'Active') === 'Active') ? 'selected' : ''; ?>>Active</option>
+                                <option value="Inactive" <?php echo (($editStaff['status'] ?? '') === 'Inactive') ? 'selected' : ''; ?>>Inactive</option>
+                            </select>
+                            <?php if ($isEditingSelf): ?>
+                            <input type="hidden" name="status" value="Active">
+                            <span class="field-hint">You cannot deactivate your own account.</span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="form-field form-field-full">
+                            <label><?php echo $editStaff ? 'New password <span class="staff-optional">(optional)</span>' : 'Password'; ?></label>
+                            <input type="password" name="password" class="form-input" <?php echo $editStaff ? '' : 'required'; ?> minlength="6" autocomplete="new-password" placeholder="<?php echo $editStaff ? 'Leave blank to keep current' : 'Minimum 6 characters'; ?>">
+                            <span class="field-hint"><?php echo $editStaff ? 'A new password forces a change on their next login.' : 'They must change this password after first login.'; ?></span>
+                        </div>
+                    </div>
+                    <div class="settings-form-actions staff-form-actions">
+                        <?php if ($editStaff): ?><a href="settings.php?tab=staff" class="btn-header-action btn-header-outline"><i class="fas fa-times"></i> Cancel</a><?php endif; ?>
+                        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-save"></i> <?php echo $editStaff ? 'Update account' : 'Create login'; ?></button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($activeTab === 'activity'): ?>
+        <div class="settings-panel active">
+            <div class="settings-panel-head">
+                <h3>Activity Log</h3>
+                <p>Recent admin sign-ins and changes. Records older than 90 days are removed automatically.</p>
+            </div>
+            <div class="table-wrapper">
+                <table>
+                    <thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th><th>IP</th></tr></thead>
+                    <tbody>
+                    <?php if (!$activityLogs): ?>
+                    <tr><td colspan="5">No activity yet.</td></tr>
+                    <?php else: foreach ($activityLogs as $log): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($log['created_at'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($log['username'] ?? '—'); ?></td>
+                        <td><?php echo htmlspecialchars(str_replace('_', ' ', (string) ($log['action'] ?? ''))); ?></td>
+                        <td><?php echo htmlspecialchars($log['details'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($log['ip_address'] ?? ''); ?></td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php if (($activityPages ?? 1) > 1): ?>
+            <div class="settings-form-actions">
+                <?php if ($activityPage > 1): ?><a class="btn-header-action btn-header-outline" href="settings.php?tab=activity&amp;p=<?php echo $activityPage - 1; ?>">Previous</a><?php endif; ?>
+                <span>Page <?php echo $activityPage; ?> of <?php echo $activityPages; ?></span>
+                <?php if ($activityPage < $activityPages): ?><a class="btn-header-action btn-header-outline" href="settings.php?tab=activity&amp;p=<?php echo $activityPage + 1; ?>">Next</a><?php endif; ?>
+            </div>
+            <?php endif; ?>
+        </div>
         <?php endif; ?>
 
         <?php if ($activeTab === 'password'): ?>
@@ -779,6 +898,9 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
                 <h3>Change Password</h3>
                 <p>Update your admin login password. You must enter your current password to confirm.</p>
             </div>
+            <?php if (!empty($_SESSION['admin_must_change'])): ?>
+            <div class="admin-force-banner">You are still using the default password. Choose a new one to continue.</div>
+            <?php endif; ?>
             <form method="POST" class="settings-form settings-form-narrow">
                 <input type="hidden" name="action" value="change_password">
                 <div class="form-grid form-grid-1">
@@ -811,4 +933,71 @@ if ($activeTab === 'signatures' && !empty($_GET['edit'])) {
         <?php endif; ?>
     </div>
 </div>
+<?php if (in_array($activeTab, ['school', 'signatures', 'gallery'], true)): ?>
+<script>
+document.querySelectorAll('[data-logo-card]').forEach(function (card) {
+    var input = card.querySelector('[data-logo-input]');
+    var frame = card.querySelector('[data-logo-frame]');
+    var nameEl = card.querySelector('[data-logo-name]');
+    var statusEl = card.querySelector('[data-logo-status]');
+    var remove = card.querySelector('[data-logo-remove]');
+    if (!input || !frame) return;
+    var emptyHtml = '<span class="sa-logo-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Drop image here</span>';
+
+    function setPreview(file) {
+        if (!file || !file.type || file.type.indexOf('image/') !== 0) return;
+        var url = URL.createObjectURL(file);
+        frame.innerHTML = '<img src="' + url + '" alt="">';
+        card.classList.add('has-file', 'has-image');
+        card.classList.remove('is-remove');
+        nameEl.textContent = file.name;
+        if (statusEl) statusEl.textContent = 'New file';
+        if (remove) remove.checked = false;
+    }
+
+    input.addEventListener('change', function () {
+        setPreview(input.files && input.files[0]);
+    });
+    ['dragenter', 'dragover'].forEach(function (evt) {
+        card.addEventListener(evt, function (e) {
+            e.preventDefault();
+            card.classList.add('is-drag');
+        });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+        card.addEventListener(evt, function () {
+            card.classList.remove('is-drag');
+        });
+    });
+    card.addEventListener('drop', function (e) {
+        e.preventDefault();
+        var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!file) return;
+        try {
+            var dt = new DataTransfer();
+            dt.items.add(file);
+            input.files = dt.files;
+        } catch (err) {}
+        setPreview(file);
+    });
+    if (remove) {
+        remove.addEventListener('change', function () {
+            card.classList.toggle('is-remove', remove.checked);
+            if (remove.checked) {
+                input.value = '';
+                card.classList.remove('has-file');
+                nameEl.textContent = 'No file chosen';
+                if (statusEl) statusEl.textContent = 'Will remove';
+                var original = card.getAttribute('data-original') || '';
+                frame.innerHTML = original
+                    ? '<img src="' + original + '" alt="">'
+                    : emptyHtml;
+            } else if (statusEl) {
+                statusEl.textContent = card.classList.contains('has-image') ? 'Current' : 'Not set';
+            }
+        });
+    }
+});
+</script>
+<?php endif; ?>
 <?php require_once 'includes/footer.php'; ?>

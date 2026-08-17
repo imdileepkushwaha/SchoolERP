@@ -22,6 +22,8 @@ require_once __DIR__ . '/../../admin/includes/settings_helpers.php';
 ensureTeacherSchema($pdo);
 ensureErpSchema($pdo);
 ensureSettingsSchema($pdo);
+require_once __DIR__ . '/../../admin/includes/module_helpers.php';
+assertPortalModuleEnabled($pdo, 'teacher_portal', 'Teacher Portal');
 
 $teacherId = (int) $_SESSION['teacher_portal_id'];
 $teacher = getTeacherById($pdo, $teacherId);

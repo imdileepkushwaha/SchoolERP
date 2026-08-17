@@ -5,6 +5,9 @@ require_once '../includes/db_connect.php';
 require_once 'includes/teacher_helpers.php';
 
 ensureTeacherSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'teacher_portal');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['enable_portal'])) {
     $id = (int) $_POST['teacher_id'];

@@ -25,6 +25,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("INSERT INTO exam_subjects (exam_id, subject_name, max_marks) VALUES (?,?,?)")
             ->execute([(int) $_POST['exam_id'], trim($_POST['subject_name']), (int) ($_POST['max_marks'] ?? 100)]);
         $_SESSION['success_msg'] = 'Subject added.';
+    } elseif ($action === 'update_exam' && isset($_POST['id'])) {
+        $pdo->prepare('UPDATE exams SET name=?, exam_type=?, class_name=?, start_date=?, end_date=? WHERE id=?')
+            ->execute([
+                trim($_POST['name'] ?? ''),
+                trim($_POST['exam_type'] ?? 'Term'),
+                trim($_POST['class_name'] ?? ''),
+                $_POST['start_date'] ?: null,
+                $_POST['end_date'] ?: null,
+                (int) $_POST['id'],
+            ]);
+        $_SESSION['success_msg'] = 'Exam updated.';
+    } elseif ($action === 'delete_subject' && isset($_POST['id'])) {
+        $subId = (int) $_POST['id'];
+        $pdo->prepare('DELETE FROM student_marks WHERE exam_subject_id = ?')->execute([$subId]);
+        $pdo->prepare('DELETE FROM exam_subjects WHERE id = ?')->execute([$subId]);
+        $_SESSION['success_msg'] = 'Subject deleted.';
+    } elseif ($action === 'delete_exam' && isset($_POST['id'])) {
+        $examId = (int) $_POST['id'];
+        $pdo->prepare(
+            'DELETE sm FROM student_marks sm
+             INNER JOIN exam_subjects es ON es.id = sm.exam_subject_id
+             WHERE es.exam_id = ?'
+        )->execute([$examId]);
+        $pdo->prepare('DELETE FROM exam_subjects WHERE exam_id = ?')->execute([$examId]);
+        $pdo->prepare('DELETE FROM exams WHERE id = ?')->execute([$examId]);
+        $_SESSION['success_msg'] = 'Exam deleted.';
     }
     header('Location: exams.php');
     exit;
@@ -182,8 +208,39 @@ foreach ($exams as $e) {
             <div class="exm-exam-actions">
                 <a href="marks.php?exam_id=<?php echo (int) $e['id']; ?>" class="exm-action-btn is-primary"><i class="fas fa-pen"></i> Enter Marks</a>
                 <a href="exam_analytics.php?exam_id=<?php echo (int) $e['id']; ?>" class="exm-action-btn"><i class="fas fa-chart-bar"></i> Analytics</a>
+                <form method="POST" style="margin:0" onsubmit="return confirm('Delete this exam, its subjects and all marks?');">
+                    <input type="hidden" name="action" value="delete_exam">
+                    <input type="hidden" name="id" value="<?php echo (int) $e['id']; ?>">
+                    <button type="submit" class="exm-action-btn" style="color:#b91c1c" title="Delete exam"><i class="fas fa-trash"></i> Delete</button>
+                </form>
             </div>
         </div>
+
+        <details class="erp-vehicle-edit" style="margin:0 0 14px">
+            <summary><i class="fas fa-pen"></i> Edit exam details</summary>
+            <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:10px">
+                <input type="hidden" name="action" value="update_exam">
+                <input type="hidden" name="id" value="<?php echo (int) $e['id']; ?>">
+                <div class="form-field"><label>Exam Name</label><input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($e['name']); ?>" required></div>
+                <div class="form-field"><label>Exam Type</label>
+                    <select name="exam_type" class="form-input form-select">
+                        <?php foreach (['Term', 'Unit Test', 'Annual', 'Pre-Board'] as $t): ?>
+                        <option value="<?php echo $t; ?>" <?php echo ($e['exam_type'] ?? '') === $t ? 'selected' : ''; ?>><?php echo $t; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label>Class</label>
+                    <select name="class_name" class="form-input form-select" required>
+                        <?php foreach ($class_options as $c): ?>
+                        <option value="<?php echo htmlspecialchars($c); ?>" <?php echo $e['class_name'] === $c ? 'selected' : ''; ?>><?php echo htmlspecialchars($c); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-field"><label>Start Date</label><input type="date" name="start_date" class="form-input" value="<?php echo htmlspecialchars($e['start_date'] ?? ''); ?>"></div>
+                <div class="form-field"><label>End Date</label><input type="date" name="end_date" class="form-input" value="<?php echo htmlspecialchars($e['end_date'] ?? ''); ?>"></div>
+                <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save Exam</button></div>
+            </form>
+        </details>
 
         <div class="exm-subjects-section">
             <p class="exm-subjects-label">Subjects &amp; max marks</p>
@@ -193,6 +250,11 @@ foreach ($exams as $e) {
                 <span class="exm-subject-chip">
                     <?php echo htmlspecialchars($sub['subject_name']); ?>
                     <em>/ <?php echo (int) $sub['max_marks']; ?></em>
+                    <form method="POST" style="display:inline;margin:0" onsubmit="return confirm('Delete this subject and its marks?');">
+                        <input type="hidden" name="action" value="delete_subject">
+                        <input type="hidden" name="id" value="<?php echo (int) $sub['id']; ?>">
+                        <button type="submit" class="action-btn delete-btn" title="Delete subject" style="width:22px;height:22px;margin-left:4px"><i class="fas fa-times"></i></button>
+                    </form>
                 </span>
                 <?php endforeach; ?>
             </div>

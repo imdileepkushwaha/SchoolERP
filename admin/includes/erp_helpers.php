@@ -3,6 +3,8 @@
 
 require_once __DIR__ . '/student_helpers.php';
 require_once __DIR__ . '/teacher_helpers.php';
+require_once __DIR__ . '/module_helpers.php';
+require_once __DIR__ . '/library_helpers.php';
 
 function ensureErpSchema($pdo) {
     ensureStudentSchema($pdo);
@@ -353,6 +355,9 @@ function ensureErpSchema($pdo) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     erpSeedDefaults($pdo);
+    ensureLibrarySchema($pdo);
+    ensureSuperAdminSchema($pdo);
+    ensureAddonFeeHeads($pdo);
 }
 
 function erpSeedDefaults($pdo) {
@@ -370,8 +375,6 @@ function erpSeedDefaults($pdo) {
             ['Tuition Fee', 0, 0],
             ['Admission Fee', 0, 1],
             ['Exam Fee', 0, 0],
-            ['Transport Fee', 1, 0],
-            ['Hostel Fee', 1, 0],
         ];
         $stmt = $pdo->prepare("INSERT INTO fee_heads (name, is_optional, is_one_time) VALUES (?,?,?)");
         foreach ($defaults as $row) {
@@ -590,13 +593,17 @@ function generateReceiptNo($pdo) {
 
 function getStudentMonthlyPaymentsMap($pdo, $studentId) {
     $stmt = $pdo->prepare(
-        "SELECT fee_month, amount, remarks
-         FROM fee_payments
-         WHERE student_id = ?"
+        "SELECT fp.fee_month, fp.amount, fp.remarks, fh.name AS head_name
+         FROM fee_payments fp
+         LEFT JOIN fee_heads fh ON fh.id = fp.fee_head_id
+         WHERE fp.student_id = ?"
     );
     $stmt->execute([(int) $studentId]);
     $map = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        if (feeHeadHiddenByModule($pdo, $row['head_name'] ?? '')) {
+            continue;
+        }
         $month = (int) ($row['fee_month'] ?? 0);
         if ($month < 1 || $month > 12) {
             $month = feeMonthFromRemarks($row['remarks'] ?? '');
@@ -793,7 +800,8 @@ function getStudentAttendanceSummary($pdo, $studentId, $year, $month) {
 }
 
 function getFeeHeads($pdo) {
-    return $pdo->query("SELECT * FROM fee_heads WHERE status = 'Active' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+    $heads = $pdo->query("SELECT * FROM fee_heads WHERE status = 'Active' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+    return filterFeeHeadsByEnabledModules($pdo, $heads);
 }
 
 function getFeeHeadById($pdo, $headId) {
@@ -900,11 +908,46 @@ function getClassFeeStructure($pdo, $className, $sessionId = null) {
     $stmt = $pdo->prepare(
         "SELECT fs.*, fh.name AS head_name, fh.is_optional, fh.is_one_time FROM fee_structures fs
          INNER JOIN fee_heads fh ON fh.id = fs.fee_head_id
-         WHERE fs.class_name = ? AND (fs.session_id = ? OR fs.session_id IS NULL)
+         WHERE fs.class_name = ? AND fh.status = 'Active' AND (fs.session_id = ? OR fs.session_id IS NULL)
          ORDER BY fh.name, fs.month"
     );
     $stmt->execute([$className, $sessionId]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    return filterFeeStructureByEnabledModules($pdo, $stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function getClassFeeStructureSummaries($pdo, $sessionId = null): array {
+    $sessionId = $sessionId ?: (getCurrentSession($pdo)['id'] ?? null);
+    $stmt = $pdo->prepare(
+        "SELECT fs.class_name, fs.fee_head_id, fh.name AS head_name, SUM(fs.amount) AS total
+         FROM fee_structures fs
+         INNER JOIN fee_heads fh ON fh.id = fs.fee_head_id
+         WHERE (fs.session_id = ? OR fs.session_id IS NULL) AND fs.amount > 0 AND fh.status = 'Active'
+         GROUP BY fs.class_name, fs.fee_head_id, fh.name"
+    );
+    $stmt->execute([$sessionId]);
+    $summaries = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        if (feeHeadHiddenByModule($pdo, $row['head_name'] ?? '')) {
+            continue;
+        }
+        $className = $row['class_name'];
+        if (!isset($summaries[$className])) {
+            $summaries[$className] = [
+                'class_name' => $className,
+                'total' => 0.0,
+                'cnt' => 0,
+                '_heads' => [],
+            ];
+        }
+        $summaries[$className]['total'] += (float) $row['total'];
+        $summaries[$className]['_heads'][(int) $row['fee_head_id']] = true;
+    }
+    foreach ($summaries as &$summary) {
+        $summary['cnt'] = count($summary['_heads']);
+        unset($summary['_heads']);
+    }
+    unset($summary);
+    return $summaries;
 }
 
 function getClassFeeAmountMap($pdo, $className, $sessionId = null) {
@@ -1005,6 +1048,63 @@ function isTransportFeeHeadName($headName) {
     return stripos($headName, 'transport') !== false;
 }
 
+function feeHeadHiddenByModule($pdo, $headName): bool {
+    if (!function_exists('moduleEnabled')) {
+        return false;
+    }
+    if (isHostelFeeHeadName($headName) && !moduleEnabled($pdo, 'hostel')) {
+        return true;
+    }
+    if (isTransportFeeHeadName($headName) && !moduleEnabled($pdo, 'transport')) {
+        return true;
+    }
+    if (stripos((string) $headName, 'library') !== false && !moduleEnabled($pdo, 'library')) {
+        return true;
+    }
+    return false;
+}
+
+function ensureAddonFeeHeads($pdo): void {
+    if (!function_exists('moduleEnabled')) {
+        return;
+    }
+    $wanted = [];
+    if (moduleEnabled($pdo, 'transport')) {
+        $wanted[] = ['Transport Fee', 1, 0];
+    }
+    if (moduleEnabled($pdo, 'hostel')) {
+        $wanted[] = ['Hostel Fee', 1, 0];
+    }
+    if (!$wanted) {
+        return;
+    }
+    $find = $pdo->prepare('SELECT id FROM fee_heads WHERE name = ? LIMIT 1');
+    $insert = $pdo->prepare('INSERT INTO fee_heads (name, is_optional, is_one_time) VALUES (?,?,?)');
+    foreach ($wanted as $row) {
+        $find->execute([$row[0]]);
+        if ($find->fetchColumn()) {
+            continue;
+        }
+        try {
+            $insert->execute($row);
+        } catch (PDOException $e) {
+        }
+    }
+}
+
+function filterFeeHeadsByEnabledModules($pdo, array $heads): array {
+    return array_values(array_filter($heads, static function ($head) use ($pdo) {
+        $name = is_array($head) ? (string) ($head['name'] ?? '') : (string) $head;
+        return !feeHeadHiddenByModule($pdo, $name);
+    }));
+}
+
+function filterFeeStructureByEnabledModules($pdo, array $structure): array {
+    return array_values(array_filter($structure, static function ($row) use ($pdo) {
+        return !feeHeadHiddenByModule($pdo, $row['head_name'] ?? $row['name'] ?? '');
+    }));
+}
+
 function studentHasActiveHostel($pdo, $studentId) {
     ensureErpSchema($pdo);
     $stmt = $pdo->prepare("SELECT 1 FROM hostel_allotments WHERE student_id = ? AND status = 'Active' LIMIT 1");
@@ -1020,10 +1120,13 @@ function studentHasTransportAssignment($pdo, $studentId) {
 }
 
 function feeStructureRowAppliesToStudent($pdo, $studentId, array $row) {
+    $headName = $row['head_name'] ?? '';
+    if (feeHeadHiddenByModule($pdo, $headName)) {
+        return false;
+    }
     if (empty($row['is_optional'])) {
         return true;
     }
-    $headName = $row['head_name'] ?? '';
     if (isHostelFeeHeadName($headName)) {
         return studentHasActiveHostel($pdo, (int) $studentId);
     }
@@ -1060,6 +1163,9 @@ function feeHeadAppliesToStudent($pdo, $studentId, $headIdOrName) {
         ]);
     }
     $headName = (string) $headIdOrName;
+    if (feeHeadHiddenByModule($pdo, $headName)) {
+        return false;
+    }
     if (isHostelFeeHeadName($headName) && !studentHasActiveHostel($pdo, (int) $studentId)) {
         return false;
     }
@@ -1111,8 +1217,12 @@ function getStudentFeeSummary($pdo, $studentId) {
     }
     $session = getCurrentSession($pdo);
     $structure = getClassFeeStructure($pdo, $student['class'], $session['id'] ?? null);
-    $hasHostel = studentHasActiveHostel($pdo, (int) $studentId);
-    $hasTransport = studentHasTransportAssignment($pdo, (int) $studentId);
+    $hasHostel = function_exists('moduleEnabled') && moduleEnabled($pdo, 'hostel')
+        ? studentHasActiveHostel($pdo, (int) $studentId)
+        : false;
+    $hasTransport = function_exists('moduleEnabled') && moduleEnabled($pdo, 'transport')
+        ? studentHasTransportAssignment($pdo, (int) $studentId)
+        : false;
     $applicableStructure = filterFeeStructureForStudent($pdo, (int) $studentId, $structure);
     $feeItems = aggregateFeeStructureByHead($applicableStructure);
     $totalDue = 0.0;
@@ -1127,10 +1237,7 @@ function getStudentFeeSummary($pdo, $studentId) {
             $currentMonthDue += (float) $row['amount'];
         }
     }
-    $paidStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM fee_payments WHERE student_id = ?");
-    $paidStmt->execute([(int) $studentId]);
-    $totalPaid = (float) $paidStmt->fetchColumn();
-    $payments = $pdo->prepare(
+    $paymentsStmt = $pdo->prepare(
         "SELECT fp.id, fp.student_id, fp.fee_head_id, fp.amount, fp.payment_date,
                 fp.fee_month, fp.payment_method, fp.receipt_no, fp.session_id, fp.remarks, fp.created_at,
                 fh.name AS head_name
@@ -1139,7 +1246,16 @@ function getStudentFeeSummary($pdo, $studentId) {
          WHERE fp.student_id = ?
          ORDER BY fp.payment_date DESC, fp.id DESC"
     );
-    $payments->execute([(int) $studentId]);
+    $paymentsStmt->execute([(int) $studentId]);
+    $payments = [];
+    $totalPaid = 0.0;
+    foreach ($paymentsStmt->fetchAll(PDO::FETCH_ASSOC) as $payment) {
+        if (feeHeadHiddenByModule($pdo, $payment['head_name'] ?? '')) {
+            continue;
+        }
+        $totalPaid += (float) $payment['amount'];
+        $payments[] = $payment;
+    }
     $balance = max(0, $totalDue - $totalPaid);
     if ($totalDue <= 0) {
         $feeStatus = 'no_structure';
@@ -1160,7 +1276,7 @@ function getStudentFeeSummary($pdo, $studentId) {
         'current_month_due' => $currentMonthDue,
         'has_hostel' => $hasHostel,
         'has_transport' => $hasTransport,
-        'payments' => $payments->fetchAll(PDO::FETCH_ASSOC),
+        'payments' => $payments,
     ];
 }
 
@@ -1331,6 +1447,149 @@ function sendAttendanceAlerts($pdo, $date, $className = '') {
     return $sent;
 }
 
+function dobMonthDay($dob): ?string {
+    $dob = trim((string) $dob);
+    if ($dob === '' || $dob === '0000-00-00') {
+        return null;
+    }
+
+    if (preg_match('/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/', $dob, $m)) {
+        $month = (int) $m[2];
+        $day = (int) $m[3];
+        if ($month >= 1 && $month <= 12 && $day >= 1 && $day <= 31) {
+            return sprintf('%02d-%02d', $month, $day);
+        }
+    }
+
+    if (preg_match('/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/', $dob, $m)) {
+        $day = (int) $m[1];
+        $month = (int) $m[2];
+        if ($month >= 1 && $month <= 12 && $day >= 1 && $day <= 31) {
+            return sprintf('%02d-%02d', $month, $day);
+        }
+    }
+
+    $ts = strtotime($dob);
+    return $ts ? date('m-d', $ts) : null;
+}
+
+function getBirthdayPeople($pdo, string $date, string $audience = 'all', string $className = ''): array {
+    $wantTs = strtotime($date);
+    $want = $wantTs ? date('m-d', $wantTs) : date('m-d');
+    $people = [];
+
+    if ($audience === 'all' || $audience === 'students') {
+        $sql = "SELECT id, name, class, section, mobile, email, dob FROM students WHERE status = 'Active' AND dob IS NOT NULL AND TRIM(dob) <> ''";
+        $params = [];
+        if ($className !== '') {
+            $sql .= " AND class = ?";
+            $params[] = $className;
+        }
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (dobMonthDay($row['dob'] ?? '') !== $want) {
+                continue;
+            }
+            $people[] = [
+                'type' => 'student',
+                'id' => (int) $row['id'],
+                'name' => (string) $row['name'],
+                'class' => trim((string) ($row['class'] ?? '')),
+                'section' => trim((string) ($row['section'] ?? '')),
+                'mobile' => trim((string) ($row['mobile'] ?? '')),
+                'email' => trim((string) ($row['email'] ?? '')),
+            ];
+        }
+    }
+
+    if ($audience === 'all' || $audience === 'teachers') {
+        try {
+            $stmt = $pdo->prepare(
+                "SELECT id, name, phone, email, dob FROM teachers
+                 WHERE status = 'Active' AND dob IS NOT NULL AND dob <> '0000-00-00'
+                   AND DATE_FORMAT(dob, '%m-%d') = ?"
+            );
+            $stmt->execute([$want]);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $people[] = [
+                    'type' => 'teacher',
+                    'id' => (int) $row['id'],
+                    'name' => (string) $row['name'],
+                    'class' => '',
+                    'section' => '',
+                    'mobile' => trim((string) ($row['phone'] ?? '')),
+                    'email' => trim((string) ($row['email'] ?? '')),
+                ];
+            }
+        } catch (Throwable $e) {
+            try {
+                $stmt = $pdo->query("SELECT id, name, phone, email, dob FROM teachers WHERE status = 'Active' AND dob IS NOT NULL AND dob <> '0000-00-00'");
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    if (dobMonthDay($row['dob'] ?? '') !== $want) {
+                        continue;
+                    }
+                    $people[] = [
+                        'type' => 'teacher',
+                        'id' => (int) $row['id'],
+                        'name' => (string) $row['name'],
+                        'class' => '',
+                        'section' => '',
+                        'mobile' => trim((string) ($row['phone'] ?? '')),
+                        'email' => trim((string) ($row['email'] ?? '')),
+                    ];
+                }
+            } catch (Throwable $e2) {
+            }
+        }
+    }
+
+    usort($people, static function ($a, $b) {
+        $typeCmp = strcmp($a['type'], $b['type']);
+        return $typeCmp !== 0 ? $typeCmp : strcasecmp($a['name'], $b['name']);
+    });
+
+    return $people;
+}
+
+function sendBirthdayWishes($pdo, string $date, string $audience = 'all', string $className = ''): int {
+    if (file_exists(__DIR__ . '/settings_helpers.php')) {
+        require_once __DIR__ . '/settings_helpers.php';
+    }
+    $school = function_exists('getSetting') ? trim((string) getSetting($pdo, 'school_name', 'EduDash')) : 'EduDash';
+    if ($school === '') {
+        $school = 'EduDash';
+    }
+
+    $sent = 0;
+    foreach (getBirthdayPeople($pdo, $date, $audience, $className) as $person) {
+        $name = $person['name'];
+        if ($person['type'] === 'student') {
+            $classBit = $person['class'] !== '' ? " ({$person['class']})" : '';
+            $msg = "Dear Parent, Happy Birthday to {$name}{$classBit}! Warm wishes from {$school}.";
+            $studentId = $person['id'];
+        } else {
+            $msg = "Happy Birthday {$name}! Wishing you a wonderful year ahead. - {$school}";
+            $studentId = null;
+        }
+
+        $delivered = false;
+        if ($person['mobile'] !== '') {
+            queueNotification($pdo, 'SMS', $person['mobile'], $msg, $studentId, 'birthday_wish');
+            queueNotification($pdo, 'WhatsApp', $person['mobile'], $msg, $studentId, 'birthday_wish');
+            $delivered = true;
+        }
+        if (!$delivered && $person['email'] !== '') {
+            queueNotification($pdo, 'Email', $person['email'], $msg, $studentId, 'birthday_wish');
+            $delivered = true;
+        }
+        if ($delivered) {
+            $sent++;
+        }
+    }
+    return $sent;
+}
+
 function enableStudentPortal($pdo, $studentId, $password = null) {
     if ($password === null || $password === '') {
         $password = substr(md5(uniqid((string) $studentId, true)), 0, 8);
@@ -1469,10 +1728,20 @@ function getRecentFeePayments($pdo, $limit = 10, $year = null) {
         $sql .= " WHERE YEAR(fp.payment_date) = ?";
         $params[] = (int) $year;
     }
-    $sql .= " ORDER BY fp.payment_date DESC, fp.id DESC LIMIT " . $limit;
+    $sql .= " ORDER BY fp.payment_date DESC, fp.id DESC LIMIT " . ($limit * 4);
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rows = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        if (feeHeadHiddenByModule($pdo, $row['head_name'] ?? '')) {
+            continue;
+        }
+        $rows[] = $row;
+        if (count($rows) >= $limit) {
+            break;
+        }
+    }
+    return $rows;
 }
 
 function getFeeDefaulters($pdo, $classFilter = '') {
@@ -1571,7 +1840,7 @@ function getDashboardStats($pdo) {
     $absentToday = (int) ($attToday['Absent'] ?? 0);
 
     $pendingLeaves = (int) $pdo->query("SELECT COUNT(*) FROM leave_requests WHERE status='Pending'")->fetchColumn();
-    $newEnquiries = (int) $pdo->query("SELECT COUNT(*) FROM admission_enquiries WHERE status='New'")->fetchColumn();
+    $newEnquiries = (int) $pdo->query("SELECT COUNT(*) FROM admission_enquiries WHERE status='New' AND IFNULL(class_sought,'') <> 'Website Contact'")->fetchColumn();
     $portalEnabled = (int) $pdo->query("SELECT COUNT(*) FROM students WHERE portal_enabled=1")->fetchColumn();
 
     $recentStudents = $pdo->query("SELECT id, ad_no, name, class FROM students ORDER BY id DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);

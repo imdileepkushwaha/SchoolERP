@@ -490,12 +490,16 @@ $sectionOptions = $filterClass !== '' ? getSectionOptions($pdo, $filterClass) : 
             </div>
         </div>
         <?php endif; ?>
-        <?php if (!$feeSummary['has_hostel'] || !$feeSummary['has_transport']): ?>
+        <?php
+        $showHostelNote = moduleEnabled($pdo, 'hostel') && empty($feeSummary['has_hostel']);
+        $showTransportNote = moduleEnabled($pdo, 'transport') && empty($feeSummary['has_transport']);
+        if ($showHostelNote || $showTransportNote):
+        ?>
         <p class="fc-optional-fee-note">
             <i class="fas fa-info-circle"></i>
-            <?php if (!$feeSummary['has_hostel'] && !$feeSummary['has_transport']): ?>
+            <?php if ($showHostelNote && $showTransportNote): ?>
             Hostel &amp; transport fees excluded — not assigned to this student.
-            <?php elseif (!$feeSummary['has_hostel']): ?>
+            <?php elseif ($showHostelNote): ?>
             Hostel fee excluded — no active hostel allotment.
             <?php else: ?>
             Transport fee excluded — not assigned to any route.

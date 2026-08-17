@@ -51,7 +51,7 @@ function saveDbProfilesConfig(array $config): bool {
         $payload[$key]['port'] = (int) ($payload[$key]['port'] ?: 3306);
     }
 
-    $export = "<?php\n// Auto-generated database profiles — Admin → Settings → Database\nreturn "
+    $export = "<?php\n// Auto-generated database profiles — Super Admin → Settings → Database\nreturn "
         . var_export($payload, true) . ";\n";
 
     return file_put_contents(dbProfilesPath(), $export) !== false;
@@ -187,7 +187,7 @@ function connectDatabase(array $options = []): array {
     }
 
     $message = "Database connection failed.\n\n" . implode("\n", $errors)
-        . "\n\nConfigure connections in Admin → Settings → Database, or use Setup Database on the login page.";
+        . "\n\nConfigure connections in Super Admin → Settings → Database, or run Database Setup on the Super Admin login page.";
 
     if ($softFail) {
         return [

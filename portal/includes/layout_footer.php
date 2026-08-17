@@ -88,7 +88,12 @@ function spToggleUserMenu(e) {
             { title: 'Exam Results', url: 'results.php', type: 'Page', icon: 'fa-chart-line' },
             { title: 'Timetable', url: 'timetable.php', type: 'Page', icon: 'fa-table' },
             { title: 'Fees', url: 'fees.php', type: 'Page', icon: 'fa-file-invoice-dollar' },
+            <?php if (moduleEnabled($pdo, 'certificates')): ?>
             { title: 'Certificates', url: 'certificates.php', type: 'Page', icon: 'fa-certificate' },
+            <?php endif; ?>
+            <?php if (moduleEnabled($pdo, 'library')): ?>
+            { title: 'Library', url: 'library.php', type: 'Page', icon: 'fa-book' },
+            <?php endif; ?>
             { title: 'Documents', url: 'documents.php', type: 'Page', icon: 'fa-folder-open' },
             { title: 'Change Password', url: 'change-password.php', type: 'Page', icon: 'fa-lock' }
         ];

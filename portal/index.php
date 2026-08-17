@@ -10,6 +10,8 @@ if (isset($_SESSION['student_portal_id'])) {
 }
 
 ensureSettingsSchema($pdo);
+require_once __DIR__ . '/../admin/includes/module_helpers.php';
+ensureSuperAdminSchema($pdo);
 $school = getSchoolProfile($pdo);
 $sp_login_logo = schoolBrandingUrl($school['logo'] ?? '', 'portal');
 $sp_login_favicon = schoolBrandingUrl($school['favicon'] ?? '', 'portal');
@@ -17,14 +19,23 @@ $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     ensureErpSchema($pdo);
-    $student = authenticateStudentPortal($pdo, $_POST['ad_no'] ?? '', $_POST['password'] ?? '');
-    if ($student) {
-        $_SESSION['student_portal_id'] = $student['id'];
-        $_SESSION['student_portal_name'] = $student['name'];
-        header('Location: dashboard.php');
-        exit;
+    if (!moduleEnabled($pdo, 'student_portal')) {
+        $error = 'Student portal is not enabled for this school.';
+    } else {
+        $license = getCurrentSchoolLicenseStatus($pdo);
+        if (!$license['ok']) {
+            $error = $license['message'];
+        } else {
+            $student = authenticateStudentPortal($pdo, $_POST['ad_no'] ?? '', $_POST['password'] ?? '');
+            if ($student) {
+                $_SESSION['student_portal_id'] = $student['id'];
+                $_SESSION['student_portal_name'] = $student['name'];
+                header('Location: dashboard.php');
+                exit;
+            }
+            $error = 'Invalid admission number or password.';
+        }
     }
-    $error = 'Invalid admission number or password.';
 }
 ?><!DOCTYPE html>
 <html lang="en">

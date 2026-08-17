@@ -1,6 +1,7 @@
 <?php
 $page_title = 'My Certificates';
 require_once 'includes/init.php';
+requireModule($pdo, 'certificates', 'dashboard.php');
 
 $stmt = $pdo->prepare("SELECT * FROM certificates WHERE student_id = ? ORDER BY id DESC");
 $stmt->execute([(int) $student['id']]);

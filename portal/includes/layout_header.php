@@ -45,7 +45,12 @@ $page_subtitle = $page_subtitle ?? '';
             <a href="timetable.php" class="<?php echo sp_nav_active('timetable'); ?>"><i class="fas fa-table"></i> Timetable</a>
             <p class="sp-nav-label">Finance &amp; Records</p>
             <a href="fees.php" class="<?php echo sp_nav_active('fees'); ?>"><i class="fas fa-file-invoice-dollar"></i> Fees</a>
+            <?php if (moduleEnabled($pdo, 'certificates')): ?>
             <a href="certificates.php" class="<?php echo sp_nav_active('certificates'); ?>"><i class="fas fa-certificate"></i> Certificates</a>
+            <?php endif; ?>
+            <?php if (moduleEnabled($pdo, 'library')): ?>
+            <a href="library.php" class="<?php echo sp_nav_active('library'); ?>"><i class="fas fa-book"></i> Library</a>
+            <?php endif; ?>
             <a href="documents.php" class="<?php echo sp_nav_active('documents'); ?>"><i class="fas fa-folder-open"></i> Documents</a>
             <p class="sp-nav-label">Account</p>
             <a href="change-password.php" class="<?php echo sp_nav_active('change-password'); ?>"><i class="fas fa-lock"></i> Change Password</a>

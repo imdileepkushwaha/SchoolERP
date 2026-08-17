@@ -5,6 +5,9 @@ require_once '../includes/db_connect.php';
 require_once 'includes/erp_helpers.php';
 
 ensureErpSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'student_portal');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['enable_portal'])) {
     $id = (int) $_POST['student_id'];

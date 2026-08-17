@@ -12,6 +12,51 @@ if ($year < 2000 || $year > 2100) {
     $year = (int) date('Y');
 }
 
+if (isset($_GET['export']) && $_GET['export'] === 'defaulters') {
+    $defaulters = getFeeDefaulters($pdo, $classFilter);
+    $filename = 'fee_defaulters_' . ($classFilter !== '' ? preg_replace('/\W+/', '_', $classFilter) . '_' : '') . date('Ymd') . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
+    fputcsv($out, ['Admission No', 'Name', 'Class', 'Section', 'Mobile', 'Total Due', 'Total Paid', 'Balance']);
+    foreach ($defaulters as $d) {
+        fputcsv($out, [
+            $d['ad_no'],
+            $d['name'],
+            $d['class'],
+            $d['section'] ?? '',
+            $d['mobile'] ?? '',
+            number_format((float) $d['total_due'], 2, '.', ''),
+            number_format((float) $d['total_paid'], 2, '.', ''),
+            number_format((float) $d['balance'], 2, '.', ''),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+if (isset($_GET['export']) && $_GET['export'] === 'collection') {
+    $monthlyReport = getFeeCollectionMonthlyBreakdown($pdo, $year);
+    $filename = 'fee_collection_' . $year . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
+    fputcsv($out, ['Month', 'Receipts', 'Total Collected']);
+    $monthNames = [1=>'Jan',2=>'Feb',3=>'Mar',4=>'Apr',5=>'May',6=>'Jun',7=>'Jul',8=>'Aug',9=>'Sep',10=>'Oct',11=>'Nov',12=>'Dec'];
+    foreach ($monthlyReport as $row) {
+        $m = (int) ($row['month'] ?? $row['m'] ?? 0);
+        fputcsv($out, [
+            ($monthNames[$m] ?? $m) . ' ' . $year,
+            (int) ($row['cnt'] ?? 0),
+            number_format((float) ($row['total'] ?? 0), 2, '.', ''),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 require_once 'includes/header.php';
 $defaulters = getFeeDefaulters($pdo, $classFilter);
 $monthlyReport = getFeeCollectionMonthlyBreakdown($pdo, $year);
@@ -34,6 +79,7 @@ $currentYear = (int) date('Y');
         </div>
     </div>
     <div class="content-top-actions">
+        <a href="fee_reports.php?export=collection&amp;year=<?php echo $year; ?>" class="btn-header-action btn-header-outline"><i class="fas fa-file-csv"></i> Export Collection</a>
         <a href="fees.php" class="btn-header-action btn-header-outline"><i class="fas fa-cog"></i> Fee Structure</a>
         <a href="fee_collect.php" class="btn-header-action btn-header-primary"><i class="fas fa-rupee-sign"></i> Collect Fee</a>
     </div>
@@ -164,6 +210,9 @@ $currentYear = (int) date('Y');
         </div>
         <?php if ($defaulterTotal > 0): ?>
         <span class="fr-dues-pill">Total dues ₹<?php echo number_format($defaulterTotal, 0); ?></span>
+        <?php endif; ?>
+        <?php if ($defaulters): ?>
+        <a href="fee_reports.php?export=defaulters<?php echo $classFilter !== '' ? '&amp;class=' . urlencode($classFilter) : ''; ?>" class="btn-header-action btn-header-outline btn-sm"><i class="fas fa-download"></i> CSV</a>
         <?php endif; ?>
     </div>
     <?php if ($defaulters): ?>

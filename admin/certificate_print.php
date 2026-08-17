@@ -13,6 +13,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 
 ensureErpSchema($pdo);
 ensureSettingsSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'certificates');
 
 $id = (int) ($_GET['id'] ?? 0);
 $stmt = $pdo->prepare("SELECT c.*, s.* FROM certificates c INNER JOIN students s ON s.id = c.student_id WHERE c.id = ?");

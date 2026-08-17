@@ -63,7 +63,12 @@ require_once 'includes/layout_header.php';
         <a href="timetable.php" class="sp-quick tone-blue"><span class="sp-quick-ic"><i class="fas fa-table"></i></span><strong>Timetable</strong><small>Weekly schedule</small></a>
         <a href="attendance.php" class="sp-quick tone-green"><span class="sp-quick-ic"><i class="far fa-calendar-check"></i></span><strong>Attendance</strong><small>Your record</small></a>
         <a href="fees.php" class="sp-quick tone-amber"><span class="sp-quick-ic"><i class="fas fa-file-invoice-dollar"></i></span><strong>Fees</strong><small>Pay &amp; receipts</small></a>
+        <?php if (moduleEnabled($pdo, 'certificates')): ?>
         <a href="certificates.php" class="sp-quick tone-purple"><span class="sp-quick-ic"><i class="fas fa-certificate"></i></span><strong>Certificates</strong><small>View &amp; download</small></a>
+        <?php endif; ?>
+        <?php if (moduleEnabled($pdo, 'library')): ?>
+        <a href="library.php" class="sp-quick tone-blue"><span class="sp-quick-ic"><i class="fas fa-book"></i></span><strong>Library</strong><small>Issued books</small></a>
+        <?php endif; ?>
         <a href="documents.php" class="sp-quick tone-blue"><span class="sp-quick-ic"><i class="fas fa-folder-open"></i></span><strong>Documents</strong><small>Your files</small></a>
     </div>
 </div>

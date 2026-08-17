@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/init.php';
 require_once __DIR__ . '/../admin/includes/teacher_helpers.php';
+requireModule($pdo, 'certificates', 'dashboard.php');
 
 $id = (int) ($_GET['id'] ?? 0);
 $stmt = $pdo->prepare("SELECT c.*, s.* FROM certificates c INNER JOIN students s ON s.id = c.student_id WHERE c.id = ? AND c.student_id = ?");

@@ -110,9 +110,10 @@ try {
                             <a href="student_edit.php?id=<?php echo $student['id']; ?>" class="action-btn edit-btn" title="Edit">
                                 <i class="fas fa-pen"></i>
                             </a>
-                            <a href="student_delete.php?id=<?php echo $student['id']; ?>" class="action-btn delete-btn btn-delete-confirm" title="Delete">
-                                <i class="fas fa-trash"></i>
-                            </a>
+                            <form method="POST" action="student_delete.php" class="inline-delete-form" style="display:inline">
+                                <input type="hidden" name="id" value="<?php echo (int) $student['id']; ?>">
+                                <button type="submit" class="action-btn delete-btn btn-delete-confirm" title="Delete"><i class="fas fa-trash"></i></button>
+                            </form>
                         </div>
                     </td>
                 </tr>

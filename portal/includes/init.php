@@ -15,6 +15,8 @@ require_once __DIR__ . '/../../admin/includes/settings_helpers.php';
 ensureStudentSchema($pdo);
 ensureErpSchema($pdo);
 ensureSettingsSchema($pdo);
+require_once __DIR__ . '/../../admin/includes/module_helpers.php';
+assertPortalModuleEnabled($pdo, 'student_portal', 'Student Portal');
 
 $id = (int) $_SESSION['student_portal_id'];
 $stmt = $pdo->prepare("SELECT * FROM students WHERE id = ? AND portal_enabled = 1");

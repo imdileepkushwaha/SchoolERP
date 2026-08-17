@@ -1,76 +1,124 @@
 <?php
+require_once 'includes/init.php';
 require_once '../includes/db_connect.php';
 require_once 'includes/student_helpers.php';
 require_once 'includes/settings_helpers.php';
+require_once 'includes/module_helpers.php';
+
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'students');
 
 ensureStudentSchema($pdo);
 ensureSettingsSchema($pdo);
 $schoolProfile = getSchoolProfile($pdo);
 $schoolLogoUrl = schoolBrandingUrl($schoolProfile['logo'] ?? '', 'admin');
 $schoolDisplayName = $schoolProfile['name'] ?: 'EduDash School';
+$schoolAddressFallback = trim((string) ($schoolProfile['address'] ?? ''));
 $signatory = getDefaultAuthoritySignature($pdo);
 $signatureUrl = schoolBrandingUrl($signatory['signature'] ?? '', 'admin');
 $signatureRole = $signatory['designation'] ?? 'Principal';
 
-if (!isset($_GET['id'])) {
+$ids = [];
+if (!empty($_GET['ids'])) {
+    foreach (explode(',', (string) $_GET['ids']) as $part) {
+        $id = (int) trim($part);
+        if ($id > 0) {
+            $ids[] = $id;
+        }
+    }
+} elseif (isset($_GET['id'])) {
+    $ids[] = (int) $_GET['id'];
+}
+$ids = array_values(array_unique($ids));
+if (!$ids) {
     die('Student ID required.');
 }
 
-$id = (int) $_GET['id'];
-$stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
-$stmt->execute([$id]);
-$student = $stmt->fetch();
-
-if (!$student) {
-    die('Student not found.');
-}
-
-$photo_url = getStudentPhotoUrl($student);
-$guardians = getStudentGuardians($pdo, $id);
-$father = $mother = $guardian = null;
-foreach ($guardians as $g) {
-    if ($g['relation'] === 'Father') $father = $g;
-    if ($g['relation'] === 'Mother') $mother = $g;
-    if ($g['relation'] === 'Guardian') $guardian = $g;
-}
-
-$emergency_name = $father['name'] ?? ($mother['name'] ?? ($guardian['name'] ?? '-'));
-$emergency_phone = $father['phone'] ?? ($mother['phone'] ?? ($guardian['phone'] ?? $student['mobile']));
-$academic_year = date('Y') . '/' . (date('Y') + 1);
-
-$raw_address = !empty($student['current_address']) ? $student['current_address'] : ($student['permanent_address'] ?? '');
-$address = trim($raw_address) !== '' ? $raw_address : 'EduDash School Campus, Main Road, City - 110001';
-
 function idCardText($text, $max = 40) {
     $text = trim((string) $text);
-    if ($text === '' || $text === '-') return '-';
+    if ($text === '' || $text === '-') {
+        return '-';
+    }
     if (mb_strlen($text) > $max) {
         return mb_substr($text, 0, $max - 1) . '…';
     }
     return $text;
 }
+
+$cards = [];
+foreach ($ids as $id) {
+    $stmt = $pdo->prepare('SELECT * FROM students WHERE id = ?');
+    $stmt->execute([$id]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        continue;
+    }
+    $guardians = getStudentGuardians($pdo, $id);
+    $father = $mother = $guardian = null;
+    foreach ($guardians as $g) {
+        if ($g['relation'] === 'Father') {
+            $father = $g;
+        }
+        if ($g['relation'] === 'Mother') {
+            $mother = $g;
+        }
+        if ($g['relation'] === 'Guardian') {
+            $guardian = $g;
+        }
+    }
+    $raw_address = !empty($student['current_address']) ? $student['current_address'] : ($student['permanent_address'] ?? '');
+    $address = trim($raw_address) !== '' ? $raw_address : ($schoolAddressFallback !== '' ? $schoolAddressFallback : 'School Campus');
+    $cards[] = [
+        'student' => $student,
+        'photo_url' => getStudentPhotoUrl($student),
+        'father' => $father,
+        'emergency_name' => $father['name'] ?? ($mother['name'] ?? ($guardian['name'] ?? '-')),
+        'emergency_phone' => $father['phone'] ?? ($mother['phone'] ?? ($guardian['phone'] ?? $student['mobile'])),
+        'address' => $address,
+    ];
+}
+if (!$cards) {
+    die('Student not found.');
+}
+
+$academic_year = date('Y') . '/' . (date('Y') + 1);
+$titleName = count($cards) === 1 ? $cards[0]['student']['name'] : (count($cards) . ' students');
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ID Card — <?php echo htmlspecialchars($student['name']); ?></title>
+    <title>ID Card — <?php echo htmlspecialchars($titleName); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="assets/css/admin.css">
+    <style>
+    @media print {
+        .id-card-set { page-break-after: always; }
+        .id-card-set:last-child { page-break-after: auto; }
+    }
+    </style>
 </head>
 <body class="id-card-page">
     <div class="id-card-print-actions">
         <button type="button" class="id-card-print-btn outline" onclick="window.close()"><i class="fas fa-times"></i> Close</button>
-        <button type="button" class="id-card-print-btn" onclick="window.print()"><i class="fas fa-print"></i> Print Both Sides</button>
+        <button type="button" class="id-card-print-btn" onclick="window.print()"><i class="fas fa-print"></i> Print <?php echo count($cards) > 1 ? count($cards) . ' Cards' : 'Both Sides'; ?></button>
     </div>
 
     <div class="id-card-page-header">
-        <h2>Student ID Card — <?php echo htmlspecialchars($student['name']); ?></h2>
+        <h2>Student ID Card<?php echo count($cards) > 1 ? 's' : ''; ?> — <?php echo htmlspecialchars($titleName); ?></h2>
         <p>Front &amp; Back · Academic Year <?php echo $academic_year; ?></p>
     </div>
 
-    <div class="id-cards-wrap">
+<?php foreach ($cards as $card):
+    $student = $card['student'];
+    $father = $card['father'];
+    $photo_url = $card['photo_url'];
+    $address = $card['address'];
+    $emergency_name = $card['emergency_name'];
+    $emergency_phone = $card['emergency_phone'];
+?>
+    <div class="id-card-set id-cards-wrap">
         <div class="id-card-col">
             <span class="id-card-label">Front Side</span>
             <div class="id-card id-front">
@@ -161,13 +209,14 @@ function idCardText($text, $max = 40) {
                             <?php endif; ?>
                         </div>
                     </div>
-                    <p class="back-terms">Property of EduDash School. If found, return to school office. Valid for current session only.</p>
+                    <p class="back-terms">Property of <?php echo htmlspecialchars($schoolDisplayName); ?>. If found, return to school office. Valid for current session only.</p>
                 </div>
                 <div class="card-bottom">
-                    <span class="back-footer-text"><i class="fas fa-shield-alt"></i> Authorized by EduDash School · <?php echo $academic_year; ?></span>
+                    <span class="back-footer-text"><i class="fas fa-shield-alt"></i> Authorized by <?php echo htmlspecialchars($schoolDisplayName); ?> · <?php echo $academic_year; ?></span>
                 </div>
             </div>
         </div>
     </div>
+<?php endforeach; ?>
 </body>
 </html>

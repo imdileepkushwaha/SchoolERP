@@ -79,7 +79,10 @@ $teachers = getAllTeachers($pdo);
                             <a href="teacher_view.php?id=<?php echo $t['id']; ?>" class="action-btn view-btn" title="Details"><i class="fas fa-eye"></i></a>
                             <a href="teacher_edit.php?id=<?php echo $t['id']; ?>" class="action-btn edit-btn" title="Edit"><i class="fas fa-pen"></i></a>
                             <a href="teacher_timetable.php?id=<?php echo $t['id']; ?>" class="action-btn view-btn" title="Timetable"><i class="fas fa-calendar-alt"></i></a>
-                            <a href="teacher_delete.php?id=<?php echo $t['id']; ?>" class="action-btn delete-btn btn-delete-confirm" title="Delete"><i class="fas fa-trash"></i></a>
+                            <form method="POST" action="teacher_delete.php" class="inline-delete-form" style="display:inline">
+                                <input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>">
+                                <button type="submit" class="action-btn delete-btn btn-delete-confirm" title="Delete"><i class="fas fa-trash"></i></button>
+                            </form>
                         </div>
                     </td>
                 </tr>

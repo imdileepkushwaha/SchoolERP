@@ -5,6 +5,9 @@ require_once '../includes/db_connect.php';
 require_once 'includes/erp_helpers.php';
 
 ensureErpSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'hostel');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -35,6 +38,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$roomId, $room['room_no'], $room['room_type'], $studentId]);
                 $_SESSION['success_msg'] = 'Room allotted.';
             }
+        }
+    } elseif ($action === 'update_hostel' && isset($_POST['id'])) {
+        $pdo->prepare('UPDATE hostels SET name=?, address=? WHERE id=?')
+            ->execute([trim($_POST['name'] ?? ''), trim($_POST['address'] ?? ''), (int) $_POST['id']]);
+        $_SESSION['success_msg'] = 'Hostel updated.';
+    } elseif ($action === 'update_room' && isset($_POST['id'])) {
+        $roomId = (int) $_POST['id'];
+        $capacity = max(1, (int) ($_POST['capacity'] ?? 2));
+        $occ = getHostelRoomOccupancy($pdo, $roomId);
+        if ($capacity < $occ) {
+            $_SESSION['error_msg'] = "Capacity cannot be less than current occupancy ($occ).";
+        } else {
+            $pdo->prepare('UPDATE hostel_rooms SET room_no=?, room_type=?, capacity=? WHERE id=?')
+                ->execute([
+                    trim($_POST['room_no'] ?? ''),
+                    trim($_POST['room_type'] ?? 'Standard'),
+                    $capacity,
+                    $roomId,
+                ]);
+            $_SESSION['success_msg'] = 'Room updated.';
         }
     } elseif ($action === 'delete_hostel' && isset($_POST['id'])) {
         $hostelId = (int) $_POST['id'];
@@ -200,6 +223,16 @@ $availableBeds = max(0, $totalBeds - $occupiedBeds);
                     <div class="erp-occupancy-fill" style="width:<?php echo $hostelCap ? min(100, round($hostelOcc / $hostelCap * 100)) : 0; ?>%"></div>
                 </div>
                 <small><?php echo count($hostelRooms); ?> rooms · <?php echo $hostelOcc; ?>/<?php echo $hostelCap; ?> beds occupied</small>
+                <details class="erp-vehicle-edit" style="margin-top:10px">
+                    <summary><i class="fas fa-pen"></i> Edit</summary>
+                    <form method="POST" class="form-grid form-grid-1 form-grid-spaced" style="margin-top:8px">
+                        <input type="hidden" name="action" value="update_hostel">
+                        <input type="hidden" name="id" value="<?php echo (int) $h['id']; ?>">
+                        <div class="form-field"><label>Name</label><input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($h['name']); ?>" required></div>
+                        <div class="form-field"><label>Address</label><input type="text" name="address" class="form-input" value="<?php echo htmlspecialchars($h['address'] ?? ''); ?>"></div>
+                        <div class="form-actions-end"><button type="submit" class="btn-header-action btn-header-primary btn-sm"><i class="fas fa-save"></i> Save</button></div>
+                    </form>
+                </details>
             </div>
         </div>
         <?php endforeach; ?>
@@ -283,6 +316,17 @@ $availableBeds = max(0, $totalBeds - $occupiedBeds);
                     <?php else: ?>
                     <span class="toolbar-meta">Vacate first</span>
                     <?php endif; ?>
+                    <details class="erp-vehicle-edit" style="display:inline-block;margin-left:6px;vertical-align:middle">
+                        <summary style="cursor:pointer;list-style:none" title="Edit room"><i class="fas fa-pen"></i></summary>
+                        <form method="POST" class="form-grid form-grid-2 form-grid-spaced" style="margin-top:8px;min-width:260px">
+                            <input type="hidden" name="action" value="update_room">
+                            <input type="hidden" name="id" value="<?php echo (int) $rm['id']; ?>">
+                            <div class="form-field"><label>Room</label><input type="text" name="room_no" class="form-input" value="<?php echo htmlspecialchars($rm['room_no']); ?>" required></div>
+                            <div class="form-field"><label>Type</label><input type="text" name="room_type" class="form-input" value="<?php echo htmlspecialchars($rm['room_type']); ?>"></div>
+                            <div class="form-field"><label>Capacity</label><input type="number" name="capacity" class="form-input" value="<?php echo (int) $rm['capacity']; ?>" min="<?php echo max(1, $occ); ?>"></div>
+                            <div class="form-actions-end form-field-full"><button type="submit" class="btn-header-action btn-header-primary btn-sm">Save</button></div>
+                        </form>
+                    </details>
                 </td>
             </tr>
             <?php endforeach; else: ?>

@@ -182,15 +182,17 @@ if (!empty($form_data['class']) && isset($pdo)) {
         <div class="form-section-card form-section-flush">
             <div class="section-card-header">
                 <div class="section-card-icon section-icon-medical"><i class="fas fa-heartbeat"></i></div>
-                <div><h4>Medical & Hostel</h4></div>
+                <div><h4><?php echo (isset($pdo) && function_exists('moduleEnabled') && moduleEnabled($pdo, 'hostel')) ? 'Medical & Hostel' : 'Medical'; ?></h4></div>
             </div>
             <div class="form-grid form-grid-1">
                 <div class="form-field"><label>Blood Group</label><input type="text" name="blood_group" class="form-input" value="<?php echo htmlspecialchars($form_data['blood_group']); ?>" placeholder="e.g. O+"></div>
                 <div class="form-field"><label>Height</label><input type="text" name="height" class="form-input" value="<?php echo htmlspecialchars($form_data['height']); ?>" placeholder="e.g. 5.2 ft"></div>
                 <div class="form-field"><label>Weight</label><input type="text" name="weight" class="form-input" value="<?php echo htmlspecialchars($form_data['weight']); ?>" placeholder="e.g. 60 kg"></div>
+                <?php if (isset($pdo) && function_exists('moduleEnabled') && moduleEnabled($pdo, 'hostel')): ?>
                 <div class="form-field"><label>Hostel</label><input type="text" name="hostel_name" class="form-input" value="<?php echo htmlspecialchars($form_data['hostel_name']); ?>"></div>
                 <div class="form-field"><label>Room No.</label><input type="text" name="room_no" class="form-input" value="<?php echo htmlspecialchars($form_data['room_no']); ?>"></div>
                 <div class="form-field"><label>Room Type</label><input type="text" name="room_type" class="form-input" value="<?php echo htmlspecialchars($form_data['room_type']); ?>"></div>
+                <?php endif; ?>
             </div>
         </div>
     </div>

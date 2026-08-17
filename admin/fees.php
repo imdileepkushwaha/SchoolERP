@@ -19,11 +19,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $isOptional = !empty($_POST['is_optional']);
         $isOneTime = !empty($_POST['is_one_time']);
         if ($name !== '') {
-            try {
-                addFeeHead($pdo, $name, $isOptional, $isOneTime);
-                $_SESSION['success_msg'] = 'Fee head added.';
-            } catch (PDOException $e) {
-                $_SESSION['error_msg'] = 'Fee head already exists.';
+            if (feeHeadHiddenByModule($pdo, $name)) {
+                $_SESSION['error_msg'] = 'Hostel / Transport fee heads are hidden because that module is disabled.';
+            } else {
+                try {
+                    addFeeHead($pdo, $name, $isOptional, $isOneTime);
+                    $_SESSION['success_msg'] = 'Fee head added.';
+                } catch (PDOException $e) {
+                    $_SESSION['error_msg'] = 'Fee head already exists.';
+                }
             }
         }
     } elseif ($action === 'update_head') {
@@ -32,14 +36,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $isOptional = !empty($_POST['is_optional']);
         $isOneTime = !empty($_POST['is_one_time']);
         if ($headId > 0 && $name !== '') {
-            try {
-                if (updateFeeHead($pdo, $headId, $name, $isOptional, $isOneTime)) {
-                    $_SESSION['success_msg'] = 'Fee head updated.';
-                } else {
-                    $_SESSION['error_msg'] = 'Fee head not found.';
+            if (feeHeadHiddenByModule($pdo, $name)) {
+                $_SESSION['error_msg'] = 'Hostel / Transport fee heads are hidden because that module is disabled.';
+            } else {
+                try {
+                    if (updateFeeHead($pdo, $headId, $name, $isOptional, $isOneTime)) {
+                        $_SESSION['success_msg'] = 'Fee head updated.';
+                    } else {
+                        $_SESSION['error_msg'] = 'Fee head not found.';
+                    }
+                } catch (PDOException $e) {
+                    $_SESSION['error_msg'] = 'Another fee head with this name already exists.';
                 }
-            } catch (PDOException $e) {
-                $_SESSION['error_msg'] = 'Another fee head with this name already exists.';
             }
         }
     } elseif ($action === 'delete_head') {
@@ -130,18 +138,7 @@ $selectedClass = trim($_GET['class'] ?? '');
 require_once 'includes/header.php';
 $heads = getFeeHeads($pdo);
 $amountMap = $selectedClass ? getClassFeeAmountMap($pdo, $selectedClass) : [];
-
-$classSummaries = [];
-$summaryStmt = $pdo->prepare(
-    "SELECT fs.class_name, SUM(fs.amount) AS total, COUNT(DISTINCT fs.fee_head_id) AS cnt
-     FROM fee_structures fs
-     WHERE (fs.session_id = ? OR fs.session_id IS NULL) AND fs.amount > 0
-     GROUP BY fs.class_name"
-);
-$summaryStmt->execute([$sessionId]);
-foreach ($summaryStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $classSummaries[$row['class_name']] = $row;
-}
+$classSummaries = getClassFeeStructureSummaries($pdo, $sessionId);
 
 $structureTotal = 0;
 $activeHeadCount = 0;
@@ -204,8 +201,12 @@ foreach ($feeMonthOrder as $idx => $m) {
 <div class="fs-quick-links">
     <a href="fee_collect.php" class="fs-quick-link"><i class="fas fa-hand-holding-usd"></i><span>Collect Fee</span></a>
     <a href="fee_reports.php" class="fs-quick-link"><i class="fas fa-chart-bar"></i><span>View Reports</span></a>
+    <?php if (moduleEnabled($pdo, 'hostel')): ?>
     <a href="hostel.php" class="fs-quick-link"><i class="fas fa-bed"></i><span>Hostel Allotment</span></a>
+    <?php endif; ?>
+    <?php if (moduleEnabled($pdo, 'transport')): ?>
     <a href="transport.php" class="fs-quick-link"><i class="fas fa-bus"></i><span>Transport Routes</span></a>
+    <?php endif; ?>
 </div>
 
 <div class="fs-layout">
@@ -309,7 +310,7 @@ foreach ($feeMonthOrder as $idx => $m) {
         <div class="fs-head-empty">
             <div class="fs-head-empty-icon"><i class="fas fa-tags"></i></div>
             <h5>No fee heads yet</h5>
-            <p>Create fee categories like Tuition, Exam, or Transport to assign amounts per class.</p>
+            <p>Create fee categories like Tuition or Exam to assign amounts per class.</p>
             <button type="button" class="btn-header-action btn-header-primary fs-add-head-btn" onclick="document.getElementById('fsOpenAddHeadModal').click();">
                 <i class="fas fa-plus"></i> Add First Head
             </button>
@@ -352,7 +353,7 @@ foreach ($feeMonthOrder as $idx => $m) {
                             <span class="fs-head-toggle-ui"><i class="fas fa-star"></i> One-time</span>
                         </label>
                     </div>
-                    <p class="fs-modal-field-hint"><i class="fas fa-lightbulb"></i> <strong>Optional</strong> for hostel/transport style fees. <strong>One-time</strong> for admission charges.</p>
+                    <p class="fs-modal-field-hint"><i class="fas fa-lightbulb"></i> <strong>Optional</strong> for facility-style fees. <strong>One-time</strong> for admission charges.</p>
                 </div>
             </div>
             <div class="fs-modal-footer">
@@ -396,7 +397,7 @@ foreach ($feeMonthOrder as $idx => $m) {
                             <span class="fs-head-toggle-ui"><i class="fas fa-star"></i> One-time</span>
                         </label>
                     </div>
-                    <p class="fs-modal-field-hint"><i class="fas fa-lightbulb"></i> <strong>Optional</strong> for hostel/transport style fees. <strong>One-time</strong> for admission charges.</p>
+                    <p class="fs-modal-field-hint"><i class="fas fa-lightbulb"></i> <strong>Optional</strong> for facility-style fees. <strong>One-time</strong> for admission charges.</p>
                 </div>
             </div>
             <div class="fs-modal-footer">
@@ -545,7 +546,7 @@ foreach ($feeMonthOrder as $idx => $m) {
 <div class="form-section-card fs-pick-class section-mb">
     <div class="fs-pick-class-icon"><i class="fas fa-hand-pointer"></i></div>
     <h4>Select a class above</h4>
-    <p>Pick a class from the grid to configure monthly tuition, exam, hostel, transport and other fees.</p>
+    <p>Pick a class from the grid to configure monthly tuition, exam and other fees.</p>
 </div>
 <?php endif; ?>
 

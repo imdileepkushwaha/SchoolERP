@@ -7,6 +7,9 @@ require_once 'includes/settings_helpers.php';
 
 ensureErpSchema($pdo);
 ensureSettingsSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'notifications');
 $class_options = getClassOptions($pdo);
 $smsCfg = getSmsSettings($pdo);
 $waCfg = getWhatsAppSettings($pdo);
@@ -21,6 +24,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $date = $_POST['alert_date'] ?? date('Y-m-d');
         $sent = sendAttendanceAlerts($pdo, $date, trim($_POST['class'] ?? ''));
         $_SESSION['success_msg'] = "Attendance alerts sent for $sent student(s).";
+    } elseif ($action === 'birthday_wish') {
+        $date = $_POST['wish_date'] ?? date('Y-m-d');
+        $audience = $_POST['audience'] ?? 'all';
+        if (!in_array($audience, ['all', 'students', 'teachers'], true)) {
+            $audience = 'all';
+        }
+        $classFilter = ($audience === 'teachers') ? '' : trim($_POST['class'] ?? '');
+        $sent = sendBirthdayWishes($pdo, $date, $audience, $classFilter);
+        if ($sent > 0) {
+            $_SESSION['success_msg'] = "Birthday wishes sent to $sent " . ($sent === 1 ? 'person' : 'people') . '.';
+        } else {
+            $_SESSION['error_msg'] = 'No birthday wishes sent. No matching contacts with a mobile or email.';
+        }
     } elseif ($action === 'custom_message') {
         $channel = in_array($_POST['channel'] ?? '', ['SMS', 'WhatsApp', 'Email'], true) ? $_POST['channel'] : 'SMS';
         $mobile = trim($_POST['recipient'] ?? '');
@@ -35,6 +51,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Location: notifications.php');
     exit;
 }
+
+$wishDate = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($_GET['wish_date'] ?? '')) ? $_GET['wish_date'] : date('Y-m-d');
+$wishAudience = $_GET['audience'] ?? 'all';
+if (!in_array($wishAudience, ['all', 'students', 'teachers'], true)) {
+    $wishAudience = 'all';
+}
+$wishClass = ($wishAudience === 'teachers') ? '' : trim((string) ($_GET['class'] ?? ''));
+$birthdayPeople = getBirthdayPeople($pdo, $wishDate, $wishAudience, $wishClass);
 
 require_once 'includes/header.php';
 
@@ -62,6 +86,7 @@ function notifyTemplateLabel($type) {
     $map = [
         'fee_reminder'       => 'Fee Reminder',
         'attendance_alert'   => 'Attendance Alert',
+        'birthday_wish'      => 'Birthday Wish',
         'custom'             => 'Custom',
     ];
     return $map[$type] ?? ($type ? ucfirst(str_replace('_', ' ', $type)) : 'General');
@@ -88,9 +113,6 @@ function notifyStatusClass($status) {
                 <span>SMS &amp; WhatsApp</span>
             </p>
         </div>
-    </div>
-    <div class="content-top-actions">
-        <a href="settings.php?tab=sms" class="btn-header-action btn-header-outline"><i class="fas fa-cog"></i> Gateway Settings</a>
     </div>
 </div>
 
@@ -129,11 +151,33 @@ function notifyStatusClass($status) {
     </div>
 </div>
 
+<?php
+$gwOff = [];
+if (($smtpCfg['enabled'] ?? '0') !== '1') {
+    $gwOff[] = 'Email (SMTP)';
+}
+if (($smsCfg['enabled'] ?? '0') !== '1') {
+    $gwOff[] = 'SMS';
+}
+if (($waCfg['enabled'] ?? '0') !== '1') {
+    $gwOff[] = 'WhatsApp';
+}
+?>
+<?php if ($gwOff): ?>
+<div class="notify-warn-banner">
+    <div class="notify-info-icon"><i class="fas fa-exclamation-triangle"></i></div>
+    <div class="notify-info-text">
+        <strong>Gateway not enabled in SuperAdmin</strong>
+        <p><?php echo htmlspecialchars(implode(', ', $gwOff)); ?> <?php echo count($gwOff) === 1 ? 'is' : 'are'; ?> off. Messages will be saved in the log only until SuperAdmin turns the gateway on.</p>
+    </div>
+</div>
+<?php endif; ?>
+
 <div class="notify-info-banner">
     <div class="notify-info-icon"><i class="fas fa-info-circle"></i></div>
     <div class="notify-info-text">
         <strong>Before sending bulk alerts</strong>
-        <p>Configure SMS, WhatsApp, and Email in <a href="settings.php" class="teal-link">Settings</a>. Enabled gateways will send live messages; otherwise entries are logged only.</p>
+        <p>SMS, WhatsApp and Email gateways are configured by SuperAdmin. Enabled gateways send live messages; otherwise entries are logged only.</p>
     </div>
     <div class="notify-gateway-chips">
         <span class="notify-gateway-chip <?php echo $smsCfg['enabled'] === '1' ? 'is-on' : 'is-off'; ?>"><i class="fas fa-sms"></i> SMS</span>
@@ -182,18 +226,20 @@ function notifyStatusClass($status) {
         </div>
         <form method="POST" class="notify-action-form">
             <input type="hidden" name="action" value="attendance_alert">
-            <div class="form-field">
-                <label><i class="fas fa-calendar-day"></i> Attendance date</label>
-                <input type="date" name="alert_date" class="form-input" value="<?php echo date('Y-m-d'); ?>">
-            </div>
-            <div class="form-field">
-                <label><i class="fas fa-school"></i> Class filter</label>
-                <select name="class" class="form-input form-select">
-                    <option value="">All classes</option>
-                    <?php foreach ($class_options as $c): ?>
-                    <option value="<?php echo htmlspecialchars($c); ?>"><?php echo htmlspecialchars($c); ?></option>
-                    <?php endforeach; ?>
-                </select>
+            <div class="notify-inline-fields">
+                <div class="form-field">
+                    <label><i class="fas fa-calendar-day"></i> Date</label>
+                    <input type="date" name="alert_date" class="form-input" value="<?php echo date('Y-m-d'); ?>">
+                </div>
+                <div class="form-field">
+                    <label><i class="fas fa-school"></i> Class</label>
+                    <select name="class" class="form-input form-select">
+                        <option value="">All classes</option>
+                        <?php foreach ($class_options as $c): ?>
+                        <option value="<?php echo htmlspecialchars($c); ?>"><?php echo htmlspecialchars($c); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
             </div>
             <ul class="notify-action-notes">
                 <li><i class="fas fa-check"></i> Absent &amp; Late status included</li>
@@ -202,6 +248,79 @@ function notifyStatusClass($status) {
             <button type="submit" class="btn-header-action btn-header-primary notify-action-btn" onclick="return confirm('Send attendance alerts for this date?');">
                 <i class="fas fa-bell"></i> Send Attendance Alerts
             </button>
+        </form>
+    </div>
+
+    <div class="form-section-card notify-action-card notify-action-card-wide notify-bday-card">
+        <div class="section-card-header notify-bday-header">
+            <div class="section-card-icon section-icon-bday"><i class="fas fa-cake-candles"></i></div>
+            <div>
+                <h4>Birthday Wishes</h4>
+                <p>Send warm wishes to students and teachers on their birthday</p>
+            </div>
+            <span class="notify-bday-count"><?php echo count($birthdayPeople); ?> on <?php echo date('d M', strtotime($wishDate) ?: time()); ?></span>
+        </div>
+        <form method="POST" class="notify-action-form notify-bday-form" id="notifyBirthdayForm">
+            <input type="hidden" name="action" value="birthday_wish">
+            <div class="notify-bday-filters">
+                <div class="form-field">
+                    <label><i class="fas fa-calendar-day"></i> Date</label>
+                    <input type="date" name="wish_date" id="wishDate" class="form-input" value="<?php echo htmlspecialchars($wishDate); ?>">
+                </div>
+                <div class="form-field">
+                    <label><i class="fas fa-users"></i> Send to</label>
+                    <select name="audience" id="wishAudience" class="form-input form-select">
+                        <option value="all" <?php echo $wishAudience === 'all' ? 'selected' : ''; ?>>Students &amp; Teachers</option>
+                        <option value="students" <?php echo $wishAudience === 'students' ? 'selected' : ''; ?>>Students only</option>
+                        <option value="teachers" <?php echo $wishAudience === 'teachers' ? 'selected' : ''; ?>>Teachers only</option>
+                    </select>
+                </div>
+                <div class="form-field" id="wishClassField">
+                    <label><i class="fas fa-school"></i> Class</label>
+                    <select name="class" id="wishClass" class="form-input form-select">
+                        <option value="">All classes</option>
+                        <?php foreach ($class_options as $c): ?>
+                        <option value="<?php echo htmlspecialchars($c); ?>" <?php echo $wishClass === $c ? 'selected' : ''; ?>><?php echo htmlspecialchars($c); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <button type="submit" class="btn-header-action btn-header-primary notify-action-btn" onclick="return confirm('Send birthday wishes to the people listed?');" <?php echo $birthdayPeople ? '' : 'disabled'; ?>>
+                    <i class="fas fa-gift"></i> Send Wishes
+                </button>
+            </div>
+            <div class="notify-bday-preview">
+                <div class="notify-bday-preview-head">
+                    <strong><i class="fas fa-cake-candles"></i> Birthdays on <?php echo date('d M', strtotime($wishDate) ?: time()); ?></strong>
+                    <span><?php echo count($birthdayPeople); ?> found</span>
+                </div>
+                <?php if ($birthdayPeople): ?>
+                <div class="notify-bday-grid">
+                    <?php foreach ($birthdayPeople as $person):
+                        $meta = $person['type'] === 'student'
+                            ? trim($person['class'] . ($person['section'] !== '' ? '-' . $person['section'] : ''))
+                            : 'Staff';
+                        $contact = $person['mobile'] !== '' ? $person['mobile'] : ($person['email'] !== '' ? $person['email'] : 'No contact');
+                    ?>
+                    <article class="notify-bday-item">
+                        <span class="notify-bday-avatar is-<?php echo htmlspecialchars($person['type']); ?>">
+                            <i class="fas <?php echo $person['type'] === 'teacher' ? 'fa-chalkboard-user' : 'fa-user-graduate'; ?>"></i>
+                        </span>
+                        <div class="notify-bday-copy">
+                            <strong><?php echo htmlspecialchars($person['name']); ?></strong>
+                            <small><?php echo htmlspecialchars($meta !== '' ? $meta : '—'); ?></small>
+                            <em><?php echo htmlspecialchars($contact); ?></em>
+                        </div>
+                        <span class="notify-bday-role is-<?php echo htmlspecialchars($person['type']); ?>"><?php echo $person['type'] === 'teacher' ? 'Teacher' : 'Student'; ?></span>
+                    </article>
+                    <?php endforeach; ?>
+                </div>
+                <?php else: ?>
+                <div class="notify-bday-empty">
+                    <i class="fas fa-cake-candles"></i>
+                    <p>No student or teacher birthdays on <?php echo date('d M', strtotime($wishDate) ?: time()); ?>.</p>
+                </div>
+                <?php endif; ?>
+            </div>
         </form>
     </div>
 
@@ -238,6 +357,7 @@ function notifyStatusClass($status) {
                 <span class="notify-key" data-text="Dear Parent, ">Dear Parent</span>
                 <span class="notify-key" data-text="Fee reminder: ">Fee reminder</span>
                 <span class="notify-key" data-text="Attendance update: ">Attendance</span>
+                <span class="notify-key" data-text="Happy Birthday! ">Birthday</span>
                 <span class="notify-key" data-text=" - EduDash School">Sign-off</span>
             </div>
             <button type="submit" class="btn-header-action btn-header-outline notify-action-btn">
@@ -337,6 +457,41 @@ function notifyStatusClass($status) {
             });
         });
     }
+
+    var wishDate = document.getElementById('wishDate');
+    var wishAudience = document.getElementById('wishAudience');
+    var wishClass = document.getElementById('wishClass');
+    var wishClassField = document.getElementById('wishClassField');
+
+    function syncWishClassField() {
+        if (!wishAudience || !wishClassField) return;
+        var hide = wishAudience.value === 'teachers';
+        var filters = wishClassField.closest('.notify-bday-filters');
+        wishClassField.style.display = hide ? 'none' : '';
+        if (filters) filters.classList.toggle('is-no-class', hide);
+        if (hide && wishClass) wishClass.value = '';
+    }
+
+    function reloadBirthdayPreview() {
+        if (!wishDate || !wishAudience) return;
+        var params = new URLSearchParams();
+        params.set('wish_date', wishDate.value || '');
+        params.set('audience', wishAudience.value || 'all');
+        if (wishAudience.value !== 'teachers' && wishClass && wishClass.value) {
+            params.set('class', wishClass.value);
+        }
+        window.location.href = 'notifications.php?' + params.toString();
+    }
+
+    syncWishClassField();
+    if (wishAudience) {
+        wishAudience.addEventListener('change', function () {
+            syncWishClassField();
+            reloadBirthdayPreview();
+        });
+    }
+    if (wishDate) wishDate.addEventListener('change', reloadBirthdayPreview);
+    if (wishClass) wishClass.addEventListener('change', reloadBirthdayPreview);
 })();
 </script>
 <?php require_once 'includes/footer.php'; ?>

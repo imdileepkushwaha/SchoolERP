@@ -4,11 +4,14 @@
 require_once __DIR__ . '/../../includes/db_connection.php';
 require_once __DIR__ . '/settings_helpers.php';
 require_once __DIR__ . '/erp_helpers.php';
+require_once __DIR__ . '/admin_helpers.php';
+require_once __DIR__ . '/module_helpers.php';
 
 function isDatabaseInstalled(PDO $pdo): bool {
     try {
-        $count = (int) $pdo->query('SELECT COUNT(*) FROM `admin_users`')->fetchColumn();
-        return $count > 0;
+        $admin = (int) $pdo->query('SELECT COUNT(*) FROM `admin_users`')->fetchColumn();
+        $sa = (int) $pdo->query('SELECT COUNT(*) FROM `superadmin_users`')->fetchColumn();
+        return $admin > 0 && $sa > 0;
     } catch (Throwable $e) {
         return false;
     }
@@ -54,8 +57,11 @@ function installFullDatabase(PDO $pdo): array {
     ensureStudentsBaseTable($pdo);
     ensureTeacherSchema($pdo);
     ensureStudentSchema($pdo);
-    ensureErpSchema($pdo);
     ensureSettingsSchema($pdo);
+    ensureErpSchema($pdo);
+    ensureLibrarySchema($pdo);
+    ensureSuperAdminSchema($pdo);
+    ensureAdminAuthSchema($pdo);
 
     return [
         'ok' => true,
@@ -92,7 +98,7 @@ function runDatabaseSetup(): array {
             return [
                 'ok' => true,
                 'already_installed' => true,
-                'message' => 'Database is already set up. You can sign in with your admin account.',
+                'message' => 'Database is already set up. You can sign in with Super Admin.',
                 'profile' => $profileKey,
             ];
         }

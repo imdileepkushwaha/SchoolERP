@@ -128,12 +128,25 @@ $salientFeatures = [
     ['icon' => 'fa-futbol', 'title' => 'Sports', 'text' => 'We encourage active participation in sports and physical activities to build fitness, teamwork, discipline, and confidence among students.', 'sports' => true],
 ];
 
-$galleryItems = [
-    ['title' => 'Student Appreciation', 'img' => 'https://images.unsplash.com/photo-1529390079861-591de354faf5?w=800&q=80'],
-    ['title' => 'Picnic', 'img' => 'https://images.unsplash.com/photo-1503454536596-3d119bd781fc?w=800&q=80'],
-    ['title' => 'Cultural events', 'img' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800&q=80'],
-    ['title' => 'Badge Distribution', 'img' => 'https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=800&q=80'],
-];
+require_once __DIR__ . '/admin/includes/admin_helpers.php';
+
+$cmsGallery = getWebsiteGallery($pdo);
+if ($cmsGallery) {
+    $galleryItems = [];
+    foreach ($cmsGallery as $g) {
+        $galleryItems[] = [
+            'title' => $g['title'],
+            'img' => websiteGalleryUrl($g['path'], 'public'),
+        ];
+    }
+} else {
+    $galleryItems = [
+        ['title' => 'Student Appreciation', 'img' => 'https://images.unsplash.com/photo-1529390079861-591de354faf5?w=800&q=80'],
+        ['title' => 'Picnic', 'img' => 'https://images.unsplash.com/photo-1503454536596-3d119bd781fc?w=800&q=80'],
+        ['title' => 'Cultural events', 'img' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800&q=80'],
+        ['title' => 'Badge Distribution', 'img' => 'https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=800&q=80'],
+    ];
+}
 
 $statStudents = $studentCount > 0 ? number_format($studentCount) . '+' : '500+';
 $statTeachers = $teacherCount > 0 ? number_format($teacherCount) . '+' : '50+';

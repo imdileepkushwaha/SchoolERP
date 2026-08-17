@@ -5,20 +5,34 @@ require_once '../includes/db_connect.php';
 require_once 'includes/erp_helpers.php';
 
 ensureErpSchema($pdo);
+require_once 'includes/module_helpers.php';
+assertSchoolLicenseActive($pdo);
+requireModule($pdo, 'certificates');
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['issue_cert'])) {
-    $studentId = (int) $_POST['student_id'];
-    $type = $_POST['cert_type'] ?? 'Bonafide';
-    if (!in_array($type, ['TC', 'Bonafide', 'Character'], true)) {
-        $type = 'Bonafide';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['issue_cert'])) {
+        $studentId = (int) $_POST['student_id'];
+        $type = $_POST['cert_type'] ?? 'Bonafide';
+        if (!in_array($type, ['TC', 'Bonafide', 'Character'], true)) {
+            $type = 'Bonafide';
+        }
+        $purpose = trim($_POST['purpose'] ?? '');
+        $certNo = generateCertificateNo($pdo, $type);
+        $pdo->prepare("INSERT INTO certificates (student_id, cert_type, certificate_no, issue_date, purpose) VALUES (?,?,?,CURDATE(),?)")
+            ->execute([$studentId, $type, $certNo, $purpose]);
+        $_SESSION['success_msg'] = $type . ' certificate issued: ' . $certNo;
+        header('Location: certificate_print.php?id=' . $pdo->lastInsertId());
+        exit;
     }
-    $purpose = trim($_POST['purpose'] ?? '');
-    $certNo = generateCertificateNo($pdo, $type);
-    $pdo->prepare("INSERT INTO certificates (student_id, cert_type, certificate_no, issue_date, purpose) VALUES (?,?,?,CURDATE(),?)")
-        ->execute([$studentId, $type, $certNo, $purpose]);
-    $_SESSION['success_msg'] = $type . ' certificate issued: ' . $certNo;
-    header('Location: certificate_print.php?id=' . $pdo->lastInsertId());
-    exit;
+    if (($_POST['action'] ?? '') === 'delete_cert') {
+        $certId = (int) ($_POST['id'] ?? 0);
+        if ($certId > 0) {
+            $pdo->prepare('DELETE FROM certificates WHERE id = ?')->execute([$certId]);
+            $_SESSION['success_msg'] = 'Certificate deleted.';
+        }
+        header('Location: certificates.php');
+        exit;
+    }
 }
 
 function certTypeMeta($type) {
@@ -33,12 +47,37 @@ function certTypeMeta($type) {
 }
 
 require_once 'includes/header.php';
-$search = trim($_GET['q'] ?? '');
+$class_options = getClassOptions($pdo);
+$filterName = trim((string) ($_GET['name'] ?? $_GET['q'] ?? ''));
+$filterAdNo = trim((string) ($_GET['ad_no'] ?? ''));
+$filterClass = trim((string) ($_GET['class'] ?? ''));
+$filterSection = trim((string) ($_GET['section'] ?? ''));
+$section_options = $filterClass !== '' ? getSectionOptions($pdo, $filterClass) : [];
+$hasFilter = $filterName !== '' || $filterAdNo !== '' || $filterClass !== '' || $filterSection !== '';
+
 $results = [];
-if ($search !== '') {
-    $stmt = $pdo->prepare("SELECT id, ad_no, name, class, section, roll FROM students WHERE status='Active' AND (name LIKE ? OR ad_no LIKE ?) LIMIT 15");
-    $like = '%' . $search . '%';
-    $stmt->execute([$like, $like]);
+if ($hasFilter) {
+    $sql = "SELECT id, ad_no, name, class, section, roll FROM students WHERE status = 'Active'";
+    $params = [];
+    if ($filterName !== '') {
+        $sql .= " AND name LIKE ?";
+        $params[] = '%' . $filterName . '%';
+    }
+    if ($filterAdNo !== '') {
+        $sql .= " AND ad_no LIKE ?";
+        $params[] = '%' . $filterAdNo . '%';
+    }
+    if ($filterClass !== '') {
+        $sql .= " AND class = ?";
+        $params[] = $filterClass;
+    }
+    if ($filterSection !== '') {
+        $sql .= " AND section = ?";
+        $params[] = $filterSection;
+    }
+    $sql .= " ORDER BY class, section, name LIMIT 40";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 $issued = $pdo->query(
@@ -83,32 +122,64 @@ foreach ($issued as $c) {
     <div class="cert-type-card tone-purple"><i class="fas fa-award"></i><strong>Character</strong><span>Conduct certificate</span></div>
 </div>
 
-<div class="form-section-card cert-search-card section-mb">
-    <div class="cert-card-head">
-        <div class="cert-card-head-icon"><i class="fas fa-search"></i></div>
+<div class="form-section-card cert-search-card section-mb" id="find-student">
+    <div class="exm-card-head">
+        <div class="exm-card-head-icon"><i class="fas fa-search"></i></div>
         <div>
             <h4>Find Student</h4>
-            <p>Search by name or admission number to issue a certificate</p>
+            <p>Filter by name, admission number, class or section</p>
         </div>
     </div>
-    <form method="GET" class="cert-search-form">
-        <div class="form-field form-field-grow">
-            <label>Student</label>
-            <input type="text" name="q" class="form-input" value="<?php echo htmlspecialchars($search); ?>" placeholder="Name or Admission No">
+    <form method="GET" class="form-grid form-grid-4 form-grid-spaced cert-search-form" action="certificates.php#find-student">
+        <div class="form-field">
+            <label>Name</label>
+            <input type="text" name="name" class="form-input" value="<?php echo htmlspecialchars($filterName); ?>" placeholder="Student name">
         </div>
-        <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-search"></i> Search</button>
+        <div class="form-field">
+            <label>Admission No</label>
+            <input type="text" name="ad_no" class="form-input" value="<?php echo htmlspecialchars($filterAdNo); ?>" placeholder="e.g. ADM-001">
+        </div>
+        <div class="form-field">
+            <label>Class</label>
+            <select name="class" class="form-input form-select" onchange="this.form.section.value=''; this.form.submit()">
+                <option value="">All classes</option>
+                <?php foreach ($class_options as $c): ?>
+                <option value="<?php echo htmlspecialchars($c); ?>" <?php echo $filterClass === $c ? 'selected' : ''; ?>><?php echo htmlspecialchars($c); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="form-field">
+            <label>Section</label>
+            <select name="section" class="form-input form-select" <?php echo $filterClass === '' ? 'disabled' : ''; ?> onchange="this.form.submit()">
+                <option value="">All sections</option>
+                <?php foreach ($section_options as $sec): ?>
+                <option value="<?php echo htmlspecialchars($sec); ?>" <?php echo $filterSection === $sec ? 'selected' : ''; ?>><?php echo htmlspecialchars($sec); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="form-field form-field-full cert-search-actions">
+            <button type="submit" class="btn-header-action btn-header-primary"><i class="fas fa-filter"></i> Search</button>
+            <?php if ($hasFilter): ?>
+            <a href="certificates.php#find-student" class="btn-header-action btn-header-outline">Reset</a>
+            <?php endif; ?>
+        </div>
     </form>
 
-    <?php if ($search !== '' && !$results): ?>
+    <?php if ($hasFilter && !$results): ?>
     <div class="cert-search-empty">
         <i class="fas fa-user-slash"></i>
-        <p>No active students found for &ldquo;<?php echo htmlspecialchars($search); ?>&rdquo;</p>
+        <p>No active students match these filters.</p>
+    </div>
+    <?php elseif (!$hasFilter): ?>
+    <div class="cert-search-empty">
+        <i class="fas fa-filter"></i>
+        <p>Enter a name, admission number, or choose class / section to find students.</p>
     </div>
     <?php endif; ?>
 
     <?php if ($results): ?>
     <div class="cert-results-head">
-        <span><i class="fas fa-users"></i> <?php echo count($results); ?> student<?php echo count($results) === 1 ? '' : 's'; ?> found</span>
+        <span><i class="fas fa-users"></i> <?php echo count($results); ?> student<?php echo count($results) === 1 ? '' : 's'; ?> found<?php echo count($results) >= 40 ? ' (showing first 40)' : ''; ?></span>
     </div>
     <div class="cert-issue-list">
         <?php foreach ($results as $r):
@@ -127,7 +198,7 @@ foreach ($issued as $c) {
                 <span class="cert-issue-avatar"><?php echo htmlspecialchars($initials); ?></span>
                 <div>
                     <strong><?php echo htmlspecialchars($r['name']); ?></strong>
-                    <small><?php echo htmlspecialchars($r['ad_no']); ?> · Class <?php echo htmlspecialchars($r['class']); ?> (<?php echo htmlspecialchars($r['section'] ?? 'A'); ?>)</small>
+                    <small><?php echo htmlspecialchars($r['ad_no']); ?> · <?php echo htmlspecialchars($r['class']); ?> (<?php echo htmlspecialchars($r['section'] ?? 'A'); ?>)</small>
                 </div>
             </div>
             <div class="cert-issue-fields">
@@ -188,6 +259,11 @@ foreach ($issued as $c) {
             <div class="cert-recent-actions">
                 <span class="cert-recent-avatar"><?php echo htmlspecialchars($initials); ?></span>
                 <a href="certificate_print.php?id=<?php echo (int) $c['id']; ?>" target="_blank" class="cert-print-btn"><i class="fas fa-print"></i> Print</a>
+                <form method="POST" style="margin:0" onsubmit="return confirm('Delete this certificate permanently?');">
+                    <input type="hidden" name="action" value="delete_cert">
+                    <input type="hidden" name="id" value="<?php echo (int) $c['id']; ?>">
+                    <button type="submit" class="action-btn delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
+                </form>
             </div>
         </div>
         <?php endforeach; ?>

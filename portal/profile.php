@@ -98,7 +98,9 @@ require_once 'includes/layout_header.php';
     </div>
 </div>
 
+<?php if (moduleEnabled($pdo, 'hostel') || moduleEnabled($pdo, 'transport')): ?>
 <div class="sp-grid-2">
+    <?php if (moduleEnabled($pdo, 'hostel')): ?>
     <div class="sp-card">
         <div class="sp-card-head">
             <h3><i class="fas fa-bed"></i> Hostel Details</h3>
@@ -118,7 +120,9 @@ require_once 'includes/layout_header.php';
         <div class="sp-empty"><div class="sp-empty-icon"><i class="fas fa-bed"></i></div><strong>No hostel allotted</strong><p>Contact the school office if you require hostel facility.</p></div>
         <?php endif; ?>
     </div>
+    <?php endif; ?>
 
+    <?php if (moduleEnabled($pdo, 'transport')): ?>
     <div class="sp-card">
         <div class="sp-card-head">
             <h3><i class="fas fa-bus"></i> Transport Details</h3>
@@ -140,7 +144,9 @@ require_once 'includes/layout_header.php';
         <div class="sp-empty"><div class="sp-empty-icon"><i class="fas fa-bus"></i></div><strong>No transport subscribed</strong><p>Contact the school office if you require transport facility.</p></div>
         <?php endif; ?>
     </div>
+    <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <div class="sp-card">
     <div class="sp-card-head">

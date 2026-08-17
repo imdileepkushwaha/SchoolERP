@@ -29,8 +29,18 @@ $chartData = array_values($stats['chartMonths']);
 $yearFeeTotal = array_sum($stats['chartMonths']);
 $hour = (int) date('G');
 $greeting = $hour < 12 ? 'Good morning' : ($hour < 17 ? 'Good afternoon' : 'Good evening');
-$adminDisplay = htmlspecialchars(ucfirst($_SESSION['admin_username']));
+$adminRawName = trim((string) ($_SESSION['admin_name'] ?? ''));
+$adminDisplay = htmlspecialchars($adminRawName !== '' ? $adminRawName : ucfirst((string) ($_SESSION['admin_username'] ?? 'Admin')));
 $todayLabel = date('l, d M Y');
+$canStudents = adminCanAccessModule($pdo, 'students');
+$canTeachers = adminCanAccessModule($pdo, 'teachers');
+$canFees = adminCanAccessModule($pdo, 'fees');
+$canAttendance = adminCanAccessModule($pdo, 'attendance');
+$canAcademic = adminCanAccessModule($pdo, 'academic');
+$canExams = adminCanAccessModule($pdo, 'exams');
+$canWebsite = adminCanAccessModule($pdo, 'website');
+$canCertificates = adminCanAccessModule($pdo, 'certificates');
+$canLibrary = adminCanAccessModule($pdo, 'library');
 ?>
 
 <div class="db-welcome">
@@ -47,13 +57,15 @@ $todayLabel = date('l, d M Y');
     <div class="db-welcome-logo"><img src="<?php echo htmlspecialchars($brandLogoUrl); ?>" alt="School logo"></div>
     <?php endif; ?>
     <div class="db-welcome-actions">
-        <a href="student_add.php" class="db-action-btn"><i class="fas fa-user-plus"></i> Add Student</a>
-        <a href="attendance.php" class="db-action-btn"><i class="far fa-calendar-check"></i> Attendance</a>
-        <a href="fee_collect.php" class="db-action-btn is-primary"><i class="fas fa-rupee-sign"></i> Collect Fee</a>
+        <?php if ($canStudents): ?><a href="student_add.php" class="db-action-btn"><i class="fas fa-user-plus"></i> Add Student</a><?php endif; ?>
+        <?php if ($canAttendance): ?><a href="attendance.php" class="db-action-btn"><i class="far fa-calendar-check"></i> Attendance</a><?php endif; ?>
+        <?php if ($canFees): ?><a href="fee_collect.php" class="db-action-btn is-primary"><i class="fas fa-rupee-sign"></i> Collect Fee</a><?php endif; ?>
+        <?php if (adminCanSalary($pdo)): ?><a href="teacher_salary.php" class="db-action-btn"><i class="fas fa-money-check-alt"></i> Salary</a><?php endif; ?>
     </div>
 </div>
 
 <div class="db-stat-grid">
+    <?php if ($canStudents): ?>
     <div class="db-stat is-students">
         <div class="db-stat-icon"><i class="fas fa-user-graduate"></i></div>
         <div class="db-stat-body">
@@ -62,6 +74,8 @@ $todayLabel = date('l, d M Y');
             <em>+<?php echo $stats['newStudentsMonth']; ?> this month</em>
         </div>
     </div>
+    <?php endif; ?>
+    <?php if ($canTeachers): ?>
     <div class="db-stat is-teachers">
         <div class="db-stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
         <div class="db-stat-body">
@@ -69,6 +83,8 @@ $todayLabel = date('l, d M Y');
             <strong><?php echo number_format($stats['totalTeachers']); ?></strong>
         </div>
     </div>
+    <?php endif; ?>
+    <?php if ($canStudents && moduleEnabled($pdo, 'student_portal')): ?>
     <div class="db-stat is-portal">
         <div class="db-stat-icon"><i class="fas fa-laptop"></i></div>
         <div class="db-stat-body">
@@ -76,6 +92,8 @@ $todayLabel = date('l, d M Y');
             <strong><?php echo number_format($stats['portalEnabled']); ?></strong>
         </div>
     </div>
+    <?php endif; ?>
+    <?php if ($canFees): ?>
     <div class="db-stat is-fee-today">
         <div class="db-stat-icon"><i class="fas fa-coins"></i></div>
         <div class="db-stat-body">
@@ -90,6 +108,8 @@ $todayLabel = date('l, d M Y');
             <strong>₹<?php echo number_format($stats['feeMonth'], 0); ?></strong>
         </div>
     </div>
+    <?php endif; ?>
+    <?php if ($canAttendance): ?>
     <div class="db-stat is-attendance">
         <div class="db-stat-icon"><i class="fas fa-user-check"></i></div>
         <div class="db-stat-body">
@@ -98,10 +118,12 @@ $todayLabel = date('l, d M Y');
             <em><?php echo $stats['absentToday']; ?> absent</em>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 
 <div class="db-layout">
     <div class="db-main">
+        <?php if ($canFees): ?>
         <div class="form-section-card db-chart-card">
             <div class="db-card-head">
                 <div class="db-card-head-icon is-green"><i class="fas fa-chart-bar"></i></div>
@@ -113,8 +135,10 @@ $todayLabel = date('l, d M Y');
             </div>
             <div id="revenueChart" class="db-chart"></div>
         </div>
+        <?php endif; ?>
 
         <div class="db-split">
+            <?php if ($canAcademic): ?>
             <div class="form-section-card db-panel">
                 <div class="db-card-head compact">
                     <div class="db-card-head-icon is-purple"><i class="fas fa-bullhorn"></i></div>
@@ -148,7 +172,9 @@ $todayLabel = date('l, d M Y');
                 </div>
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
 
+            <?php if ($canTeachers): ?>
             <div class="form-section-card db-panel">
                 <div class="db-card-head compact">
                     <div class="db-card-head-icon is-orange"><i class="fas fa-plane-departure"></i></div>
@@ -181,8 +207,10 @@ $todayLabel = date('l, d M Y');
                 </div>
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
         </div>
 
+        <?php if ($canStudents): ?>
         <div class="form-section-card db-panel">
             <div class="db-card-head compact">
                 <div class="db-card-head-icon is-blue"><i class="fas fa-user-plus"></i></div>
@@ -225,6 +253,7 @@ $todayLabel = date('l, d M Y');
             <div class="db-empty"><i class="fas fa-users"></i><p>No students yet</p></div>
             <?php endif; ?>
         </div>
+        <?php endif; ?>
     </div>
 
     <div class="db-side">
@@ -234,18 +263,29 @@ $todayLabel = date('l, d M Y');
                 <div><h4>Quick Actions</h4></div>
             </div>
             <div class="db-quick-grid">
-                <a href="student_add.php" class="db-quick-tile"><i class="fas fa-user-plus"></i><span>Add Student</span></a>
-                <a href="teacher_add.php" class="db-quick-tile"><i class="fas fa-chalkboard-teacher"></i><span>Add Teacher</span></a>
+                <?php if ($canStudents): ?><a href="student_add.php" class="db-quick-tile"><i class="fas fa-user-plus"></i><span>Add Student</span></a><?php endif; ?>
+                <?php if ($canTeachers): ?><a href="teacher_add.php" class="db-quick-tile"><i class="fas fa-chalkboard-teacher"></i><span>Add Teacher</span></a><?php endif; ?>
+                <?php if ($canStudents): ?>
                 <a href="admission_enquiries.php" class="db-quick-tile<?php echo $stats['newEnquiries'] ? ' has-badge' : ''; ?>">
                     <i class="fas fa-inbox"></i><span>Enquiries</span>
                     <?php if ($stats['newEnquiries']): ?><em><?php echo $stats['newEnquiries']; ?> new</em><?php endif; ?>
                 </a>
-                <a href="homework.php" class="db-quick-tile"><i class="fas fa-book"></i><span>Homework</span></a>
+                <?php endif; ?>
+                <?php if ($canWebsite): ?><a href="website_enquiries.php" class="db-quick-tile"><i class="fas fa-globe"></i><span>Website</span></a><?php endif; ?>
+                <?php if ($canAcademic): ?><a href="homework.php" class="db-quick-tile"><i class="fas fa-book"></i><span>Homework</span></a><?php endif; ?>
+                <?php if ($canExams): ?><a href="report_cards.php" class="db-quick-tile"><i class="fas fa-file-alt"></i><span>Report Cards</span></a><?php endif; ?>
+                <?php if ($canCertificates): ?>
                 <a href="certificates.php" class="db-quick-tile"><i class="fas fa-certificate"></i><span>Certificates</span></a>
-                <a href="settings.php" class="db-quick-tile"><i class="fas fa-cog"></i><span>Settings</span></a>
+                <?php endif; ?>
+                <?php if ($canLibrary): ?>
+                <a href="library.php" class="db-quick-tile"><i class="fas fa-book-open"></i><span>Library</span></a>
+                <?php endif; ?>
+                <?php if (adminCanSalary($pdo)): ?><a href="teacher_salary.php" class="db-quick-tile"><i class="fas fa-money-check-alt"></i><span>Salary</span></a><?php endif; ?>
+                <a href="<?php echo adminCanManageSchool() ? 'settings.php' : 'profile.php'; ?>" class="db-quick-tile"><i class="fas fa-cog"></i><span><?php echo adminCanManageSchool() ? 'Settings' : 'Profile'; ?></span></a>
             </div>
         </div>
 
+        <?php if ($canFees): ?>
         <div class="form-section-card db-panel">
             <div class="db-card-head compact">
                 <div class="db-card-head-icon is-green"><i class="fas fa-receipt"></i></div>
@@ -272,7 +312,9 @@ $todayLabel = date('l, d M Y');
             <div class="db-empty"><i class="fas fa-receipt"></i><p>No payments yet</p></div>
             <?php endif; ?>
         </div>
+        <?php endif; ?>
 
+        <?php if ($canTeachers): ?>
         <div class="form-section-card db-panel">
             <div class="db-card-head compact">
                 <div class="db-card-head-icon is-indigo"><i class="fas fa-users"></i></div>
@@ -294,9 +336,11 @@ $todayLabel = date('l, d M Y');
                 <?php endforeach; ?>
             </div>
         </div>
+        <?php endif; ?>
     </div>
 </div>
 
+<?php if ($canWebsite): ?>
 <div class="form-section-card db-panel db-website-enquiries">
     <div class="db-card-head compact">
         <div class="db-card-head-icon is-orange"><i class="fas fa-globe"></i></div>
@@ -304,7 +348,7 @@ $todayLabel = date('l, d M Y');
             <h4>Website Enquiries</h4>
             <p>Contact form submissions from the public homepage<?php if ($websiteEnquiriesNew): ?> · <strong><?php echo $websiteEnquiriesNew; ?> new</strong><?php endif; ?></p>
         </div>
-        <a href="admission_enquiries.php" class="db-card-link">Manage all <i class="fas fa-arrow-right"></i></a>
+        <a href="website_enquiries.php" class="db-card-link">Manage all <i class="fas fa-arrow-right"></i></a>
     </div>
     <?php if ($websiteEnquiries): ?>
     <div class="table-wrapper">
@@ -349,6 +393,7 @@ $todayLabel = date('l, d M Y');
     </div>
     <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {

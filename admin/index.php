@@ -2,6 +2,7 @@
 // admin/index.php (Login Page)
 session_start();
 require_once '../includes/db_connection.php';
+require_once 'includes/admin_helpers.php';
 
 $dbConnection = connectDatabase(['soft_fail' => true]);
 $pdo = $dbConnection['pdo'] ?? null;
@@ -11,12 +12,11 @@ $db_connection_error = $dbConnection['error'] ?? '';
 $db_environment = $dbConnection['environment'] ?? (isLocalEnvironment() ? 'local' : 'server');
 
 if (isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in'] === true) {
-    header('Location: dashboard.php');
+    header('Location: ' . (!empty($_SESSION['admin_must_change']) ? 'settings.php?tab=password' : 'dashboard.php'));
     exit;
 }
 
 $error = '';
-$setupMessage = '';
 $old_username = '';
 $dbInstalled = false;
 
@@ -26,50 +26,61 @@ if ($pdo) {
     $dbInstalled = isDatabaseInstalled($pdo);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'db_setup') {
-    $setupResult = runDatabaseSetup();
-    if (!empty($setupResult['ok'])) {
-        $setupMessage = $setupResult['message'] ?? 'Database setup complete.';
-        if (empty($setupResult['already_installed']) && !empty($setupResult['default_login'])) {
-            $setupMessage .= ' Default login: admin / admin123';
-        }
-        $dbConnection = connectDatabase(['soft_fail' => true]);
-        $pdo = $dbConnection['pdo'] ?? null;
-        $db_active_profile = $dbConnection['profile'] ?? '';
-        if ($pdo) {
-            $dbInstalled = isDatabaseInstalled($pdo);
-        }
-    } else {
-        $error = $setupResult['error'] ?? 'Database setup failed.';
-    }
-} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = trim($_POST['password'] ?? '');
     $old_username = $username;
 
-    if (!$pdo) {
-        $error = 'Database is not connected. Use Setup Database first.';
+    if (!adminCsrfVerify()) {
+        $error = 'Session expired. Please try again.';
+    } elseif (!$pdo) {
+        $error = 'Database is not connected. Start MySQL, then install from Super Admin.';
     } elseif (empty($username) || empty($password)) {
         $error = 'Please enter both username and password.';
     } elseif (!$dbInstalled) {
-        $error = 'Database tables are not installed yet. Click Setup Database first.';
+        $error = 'Database is not installed yet. Open Super Admin and run Database Setup.';
     } else {
         try {
-            $stmt = $pdo->prepare('SELECT id, username, password FROM admin_users WHERE username = :username');
-            $stmt->execute(['username' => $username]);
-            $user = $stmt->fetch();
+            ensureAdminAuthSchema($pdo);
+            if (adminLoginIsLocked($pdo)) {
+                $error = 'Too many failed sign-ins. Wait 15 minutes and try again.';
+                adminLogActivity($pdo, 'login_failed', 'Locked out: ' . $username);
+            } else {
+                $stmt = $pdo->prepare('SELECT * FROM admin_users WHERE username = :username');
+                $stmt->execute(['username' => $username]);
+                $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            if ($user && password_verify($password, $user['password'])) {
-                $_SESSION['admin_logged_in'] = true;
-                $_SESSION['admin_id'] = $user['id'];
-                $_SESSION['admin_username'] = $user['username'];
-                header('Location: dashboard.php');
-                exit;
+                if ($user && password_verify($password, $user['password'])) {
+                    if (($user['status'] ?? 'Active') === 'Inactive') {
+                        $error = 'This account is inactive. Contact a school administrator.';
+                    } else {
+                        require_once 'includes/module_helpers.php';
+                        ensureSuperAdminSchema($pdo);
+                        $license = getCurrentSchoolLicenseStatus($pdo);
+                        if (!$license['ok']) {
+                            $error = $license['message'];
+                        } else {
+                            adminClearLoginAttempts($pdo);
+                            session_regenerate_id(true);
+                            $_SESSION['admin_logged_in'] = true;
+                            $_SESSION['admin_id'] = $user['id'];
+                            $_SESSION['admin_username'] = $user['username'];
+                            $_SESSION['admin_name'] = trim((string) ($user['name'] ?? '')) ?: $user['username'];
+                            $_SESSION['admin_role'] = isset(adminRoles()[$user['role'] ?? '']) ? $user['role'] : 'admin';
+                            $_SESSION['admin_must_change'] = adminMustChangePassword($user);
+                            adminLogActivity($pdo, 'login', 'Signed in to Admin.');
+                            header('Location: ' . (!empty($_SESSION['admin_must_change']) ? 'settings.php?tab=password' : 'dashboard.php'));
+                            exit;
+                        }
+                    }
+                } else {
+                    adminRecordLoginAttempt($pdo, $username);
+                    adminLogActivity($pdo, 'login_failed', 'Failed sign-in for "' . $username . '".');
+                    $error = 'Invalid username or password.';
+                }
             }
-
-            $error = 'Invalid username or password.';
         } catch (PDOException $e) {
-            $error = 'Database error. Please run Setup Database or check MySQL.';
+            $error = 'Database error. Please install from Super Admin or check MySQL.';
         }
     }
 }
@@ -94,7 +105,6 @@ if ($pdo) {
 $dbStatusLabel = $pdo
     ? (($db_active_profile === 'online' ? 'Online' : 'Offline') . ' DB')
     : 'Not Connected';
-$dbSetupTarget = getSetupProfileKey() === 'online' ? 'Online (Server)' : 'Local (XAMPP)';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -175,13 +185,6 @@ $dbSetupTarget = getSetupProfileKey() === 'online' ? 'Online (Server)' : 'Local 
                         Mode <?php echo htmlspecialchars(strtoupper($db_connection_mode)); ?>
                     </p>
 
-                    <?php if (!empty($setupMessage)): ?>
-                    <div class="alert alert-success login-alert" id="setupSuccessAlert">
-                        <i class="fas fa-check-circle"></i>
-                        <span><?php echo htmlspecialchars($setupMessage); ?></span>
-                    </div>
-                    <?php endif; ?>
-
                     <?php if (!empty($error)): ?>
                     <div class="alert alert-danger login-alert">
                         <i class="fas fa-exclamation-circle"></i>
@@ -189,14 +192,23 @@ $dbSetupTarget = getSetupProfileKey() === 'online' ? 'Online (Server)' : 'Local 
                     </div>
                     <?php endif; ?>
 
-                    <?php if (!$pdo): ?>
+                    <?php if (!$dbInstalled): ?>
                     <div class="alert alert-warning login-alert login-db-hint">
-                        <i class="fas fa-plug-circle-exclamation"></i>
-                        <span>MySQL not connected. Start XAMPP MySQL or verify online credentials, then run database setup below.</span>
+                        <i class="fas fa-database"></i>
+                        <span><?php echo !$pdo
+                            ? 'MySQL is not connected, or tables are not installed.'
+                            : 'School ERP tables are not installed yet.'; ?>
+                            Open <a href="../superadmin/">Super Admin</a> and run Database Setup first.</span>
                     </div>
-                    <?php endif; ?>
+                    <p class="login-footer" style="margin-top:0">
+                        <a href="../superadmin/" class="back-link">
+                            <i class="fas fa-shield-alt"></i> Open Super Admin setup
+                        </a>
+                    </p>
+                    <?php else: ?>
 
                     <form action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" method="post" class="login-form">
+                        <?php echo adminCsrfField(); ?>
                         <div class="admin-login-field">
                             <label for="username">Username</label>
                             <div class="admin-login-input">
@@ -219,27 +231,6 @@ $dbSetupTarget = getSetupProfileKey() === 'online' ? 'Online (Server)' : 'Local 
                             <i class="fas fa-arrow-right"></i>
                         </button>
                     </form>
-
-                    <?php if (!$dbInstalled): ?>
-                    <div class="login-divider" aria-hidden="true"><span>First time setup</span></div>
-
-                    <section class="login-install-card" id="loginInstallCard">
-                        <div class="login-install-head">
-                            <span class="login-install-icon" aria-hidden="true"><i class="fas fa-database"></i></span>
-                            <div class="login-install-copy">
-                                <h3>Database Setup</h3>
-                                <p>Install database and all ERP tables on <strong><?php echo htmlspecialchars($dbSetupTarget); ?></strong>.</p>
-                            </div>
-                        </div>
-                        <form action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" method="post" class="login-install-form" id="dbSetupForm">
-                            <input type="hidden" name="action" value="db_setup">
-                            <button type="submit" class="login-install-btn" id="dbSetupBtn">
-                                <i class="fas fa-wrench"></i>
-                                <span>Run Database Setup</span>
-                            </button>
-                        </form>
-                        <p class="login-install-note">Default login after setup: <code>admin</code> / <code>admin123</code></p>
-                    </section>
                     <?php endif; ?>
 
                     <div class="login-portal-links">
@@ -260,24 +251,18 @@ $dbSetupTarget = getSetupProfileKey() === 'online' ? 'Online (Server)' : 'Local 
     </div>
 
     <script>
-        document.getElementById('passwordToggle').addEventListener('click', function () {
-            var input = document.getElementById('password');
-            var icon = this.querySelector('i');
-            if (input.type === 'password') {
-                input.type = 'text';
-                icon.classList.replace('fa-eye', 'fa-eye-slash');
-            } else {
-                input.type = 'password';
-                icon.classList.replace('fa-eye-slash', 'fa-eye');
-            }
-        });
-
-        var dbSetupForm = document.getElementById('dbSetupForm');
-        if (dbSetupForm) {
-            dbSetupForm.addEventListener('submit', function () {
-                var btn = document.getElementById('dbSetupBtn');
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Installing tables…</span>';
+        var passwordToggle = document.getElementById('passwordToggle');
+        if (passwordToggle) {
+            passwordToggle.addEventListener('click', function () {
+                var input = document.getElementById('password');
+                var icon = this.querySelector('i');
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    icon.classList.replace('fa-eye', 'fa-eye-slash');
+                } else {
+                    input.type = 'password';
+                    icon.classList.replace('fa-eye-slash', 'fa-eye');
+                }
             });
         }
     </script>

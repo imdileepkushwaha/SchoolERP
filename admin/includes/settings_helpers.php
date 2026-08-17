@@ -318,6 +318,18 @@ function saveSchoolProfile($pdo, array $data) {
     if (array_key_exists('favicon', $data)) {
         setSetting($pdo, 'school_favicon', $data['favicon'] ?? '');
     }
+
+    try {
+        $name = trim((string) ($data['name'] ?? ''));
+        if ($name !== '') {
+            $pdo->prepare('UPDATE sa_schools SET name=?, phone=?, email=? WHERE is_current = 1')->execute([
+                $name,
+                trim((string) ($data['phone'] ?? '')) !== '' ? trim((string) $data['phone']) : null,
+                trim((string) ($data['email'] ?? '')) !== '' ? trim((string) $data['email']) : null,
+            ]);
+        }
+    } catch (Throwable $e) {
+    }
 }
 
 function changeAdminPassword($pdo, $adminId, $currentPassword, $newPassword, $confirmPassword) {
@@ -331,6 +343,9 @@ function changeAdminPassword($pdo, $adminId, $currentPassword, $newPassword, $co
     if ($newPassword !== $confirmPassword) {
         $errors[] = 'New password and confirmation do not match.';
     }
+    if (strcasecmp($newPassword, 'admin123') === 0) {
+        $errors[] = 'Please choose a password other than the default.';
+    }
     if (!empty($errors)) {
         return $errors;
     }
@@ -343,7 +358,15 @@ function changeAdminPassword($pdo, $adminId, $currentPassword, $newPassword, $co
     }
 
     $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
-    $pdo->prepare("UPDATE admin_users SET password = ? WHERE id = ?")->execute([$newHash, (int) $adminId]);
+    try {
+        $pdo->prepare("UPDATE admin_users SET password = ?, must_change_password = 0 WHERE id = ?")->execute([$newHash, (int) $adminId]);
+    } catch (Throwable $e) {
+        $pdo->prepare("UPDATE admin_users SET password = ? WHERE id = ?")->execute([$newHash, (int) $adminId]);
+    }
+    unset($_SESSION['admin_must_change']);
+    if (function_exists('adminLogActivity')) {
+        adminLogActivity($pdo, 'password_changed', 'Admin password was updated.');
+    }
     return [];
 }
 

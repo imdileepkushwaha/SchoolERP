@@ -416,6 +416,7 @@ $examRows = $studentExams->fetchAll(PDO::FETCH_ASSOC);
                 <a href="student_documents.php?student_id=<?php echo $id; ?>" class="btn-header-action btn-header-outline btn-sm" style="margin-top:12px"><i class="fas fa-upload"></i> Manage Documents</a>
             </div>
         </div>
+        <?php if (moduleEnabled($pdo, 'hostel')): ?>
         <div class="data-card">
             <div class="section-card-header">
                 <div class="section-card-icon section-icon-hostel"><i class="fas fa-bed"></i></div>
@@ -448,6 +449,7 @@ $examRows = $studentExams->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
         </div>
+        <?php endif; ?>
     </div>
 
     <div class="data-card data-card-full">

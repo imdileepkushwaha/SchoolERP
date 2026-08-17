@@ -13,6 +13,8 @@ require_once __DIR__ . '/../admin/includes/settings_helpers.php';
 ensureTeacherSchema($pdo);
 ensureTeacherPortalRepair($pdo);
 ensureSettingsSchema($pdo);
+require_once __DIR__ . '/../admin/includes/module_helpers.php';
+ensureSuperAdminSchema($pdo);
 $tp_login_school = getSchoolProfile($pdo);
 $tp_login_logo = schoolBrandingUrl($tp_login_school['logo'] ?? '', 'teacher');
 $tp_login_favicon = schoolBrandingUrl($tp_login_school['favicon'] ?? '', 'teacher');
@@ -24,20 +26,29 @@ if (isset($_SESSION['teacher_portal_id'])) {
 
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $login = getTeacherLoginStatus($pdo, $_POST['employee_id'] ?? '', $_POST['password'] ?? '');
-    if ($login['ok']) {
-        $_SESSION['teacher_portal_id'] = $login['teacher']['id'];
-        $_SESSION['teacher_portal_name'] = $login['teacher']['name'];
-        $_SESSION['teacher_portal_emp'] = $login['teacher']['employee_id'];
-        if (teacherMustChangePassword($login['teacher'])) {
-            header('Location: change-password.php?required=1');
+    if (!moduleEnabled($pdo, 'teacher_portal')) {
+        $error = 'Teacher portal is not enabled for this school.';
+    } else {
+        $license = getCurrentSchoolLicenseStatus($pdo);
+        if (!$license['ok']) {
+            $error = $license['message'];
         } else {
-            header('Location: dashboard.php');
+            $login = getTeacherLoginStatus($pdo, $_POST['employee_id'] ?? '', $_POST['password'] ?? '');
+            if ($login['ok']) {
+                $_SESSION['teacher_portal_id'] = $login['teacher']['id'];
+                $_SESSION['teacher_portal_name'] = $login['teacher']['name'];
+                $_SESSION['teacher_portal_emp'] = $login['teacher']['employee_id'];
+                if (teacherMustChangePassword($login['teacher'])) {
+                    header('Location: change-password.php?required=1');
+                } else {
+                    header('Location: dashboard.php');
+                }
+                exit;
+            }
+            $error = teacherLoginErrorMessage($login['reason']);
+            $old_employee_id = trim($_POST['employee_id'] ?? '');
         }
-        exit;
     }
-    $error = teacherLoginErrorMessage($login['reason']);
-    $old_employee_id = trim($_POST['employee_id'] ?? '');
 }
 ?><!DOCTYPE html>
 <html lang="en">
