@@ -217,6 +217,27 @@ if ($tab === 'security') {
     }
 }
 
+$bakTables = 0;
+$bakDb = '—';
+$bakLastDownload = null;
+$bakLastRestore = null;
+if ($tab === 'backup') {
+    try {
+        $bakTables = count($pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN) ?: []);
+        $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+        if ($dbName) {
+            $bakDb = (string) $dbName;
+        }
+    } catch (Throwable $e) {
+    }
+    try {
+        $bakTimes = $pdo->query("SELECT action, MAX(created_at) FROM sa_activity_logs WHERE action IN ('backup_downloaded','backup_restored') GROUP BY action")->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+        $bakLastDownload = $bakTimes['backup_downloaded'] ?? null;
+        $bakLastRestore = $bakTimes['backup_restored'] ?? null;
+    } catch (Throwable $e) {
+    }
+}
+
 if ($tab === 'activity') {
     $activityTotal = saCountActivityLogs($pdo, $activityFilter);
     $activityPages = max(1, (int) ceil($activityTotal / $activityPerPage));
@@ -308,11 +329,14 @@ require_once 'includes/layout_header.php';
     <section class="settings-main">
         <?php if ($tab === 'overview'):
             $overviewLogo = $schoolLogoLightUrl ?: $schoolLogoUrl;
+            $ovPhone = trim((string) ($schoolProfile['phone'] ?: ($school['phone'] ?? '')));
+            $ovEmail = trim((string) ($schoolProfile['email'] ?: ($school['email'] ?? '')));
+            $ovAddress = trim((string) ($schoolProfile['address'] ?? ''));
             $licenseText = !$licenseOk
                 ? 'Blocked'
                 : ($licenseDays === null
                     ? 'Active · no expiry'
-                    : ($licenseDays < 0 ? 'Expired' : ('Active · ' . (int) $licenseDays . ' days left')));
+                    : ($licenseDays < 0 ? 'Expired' : ('Active · ' . (int) $licenseDays . ' day' . ($licenseDays === 1 ? '' : 's') . ' left')));
         ?>
         <div class="settings-card">
             <div class="settings-card-head">
@@ -328,7 +352,7 @@ require_once 'includes/layout_header.php';
                 <span class="status-pill <?php echo $licenseOk ? 'online' : 'offline'; ?>"><?php echo $licenseOk ? 'Access OK' : 'Blocked'; ?></span>
             </div>
 
-            <div class="settings-section">
+            <div class="settings-section sa-ov-section">
                 <div class="sa-overview-hero">
                     <div class="sa-brand-preview">
                         <?php if ($overviewLogo): ?>
@@ -338,16 +362,80 @@ require_once 'includes/layout_header.php';
                         <?php endif; ?>
                         <span>This install</span>
                         <strong><?php echo e($schoolProfile['name'] ?: $school['name']); ?></strong>
-                        <em><?php echo e($schoolProfile['tagline'] ?: 'School ERP'); ?></em>
+                        <em><?php echo e($schoolProfile['tagline'] ?: $planLabel . ' plan'); ?></em>
                     </div>
                     <div class="sa-overview-facts">
-                        <div><span>Plan</span><strong><?php echo e($planLabel); ?></strong></div>
-                        <div><span>License</span><strong><?php echo e($licenseText); ?></strong></div>
-                        <div><span>Modules</span><strong><?php echo count($moduleKeys); ?> / <?php echo (int) $moduleTotal; ?> on</strong></div>
-                        <div><span>Phone</span><strong><?php echo e($schoolProfile['phone'] ?: ($school['phone'] ?? '—')); ?></strong></div>
-                        <div><span>Email</span><strong><?php echo e($schoolProfile['email'] ?: ($school['email'] ?? '—')); ?></strong></div>
-                        <div><span>Address</span><strong><?php echo e($schoolProfile['address'] ?: '—'); ?></strong></div>
+                        <p class="sa-overview-facts-kicker">School details</p>
+                        <div class="sa-fact">
+                            <span class="sa-fact-ico sa-fact-ico-plan" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/></svg>
+                            </span>
+                            <div class="sa-fact-body">
+                                <span>Plan</span>
+                                <strong><?php echo e($planLabel); ?></strong>
+                            </div>
+                        </div>
+                        <div class="sa-fact <?php echo $licenseOk ? 'is-ok' : 'is-blocked'; ?>">
+                            <span class="sa-fact-ico" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                            </span>
+                            <div class="sa-fact-body">
+                                <span>License</span>
+                                <strong><?php echo e($licenseText); ?></strong>
+                            </div>
+                        </div>
+                        <div class="sa-fact">
+                            <span class="sa-fact-ico sa-fact-ico-mod" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                            </span>
+                            <div class="sa-fact-body">
+                                <span>Modules</span>
+                                <strong><?php echo count($moduleKeys); ?> / <?php echo (int) $moduleTotal; ?> on</strong>
+                            </div>
+                        </div>
+                        <div class="sa-fact">
+                            <span class="sa-fact-ico sa-fact-ico-phone" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>
+                            </span>
+                            <div class="sa-fact-body">
+                                <span>Phone</span>
+                                <strong><?php if ($ovPhone): ?><a href="tel:<?php echo e(preg_replace('/\s+/', '', $ovPhone)); ?>"><?php echo e($ovPhone); ?></a><?php else: ?>—<?php endif; ?></strong>
+                            </div>
+                        </div>
+                        <div class="sa-fact sa-fact-wide">
+                            <span class="sa-fact-ico sa-fact-ico-email" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/></svg>
+                            </span>
+                            <div class="sa-fact-body">
+                                <span>Email</span>
+                                <strong><?php if ($ovEmail): ?><a href="mailto:<?php echo e($ovEmail); ?>"><?php echo e($ovEmail); ?></a><?php else: ?>—<?php endif; ?></strong>
+                            </div>
+                        </div>
+                        <div class="sa-fact sa-fact-wide">
+                            <span class="sa-fact-ico sa-fact-ico-map" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                            </span>
+                            <div class="sa-fact-body">
+                                <span>Address</span>
+                                <strong><?php echo e($ovAddress !== '' ? $ovAddress : '—'); ?></strong>
+                            </div>
+                        </div>
+                        <div class="sa-overview-actions">
+                            <a href="license.php" class="btn btn-primary btn-sm">Manage license</a>
+                            <a href="features.php" class="btn btn-outline btn-sm">Plan &amp; features</a>
+                            <a href="../admin/settings.php?tab=school" class="btn btn-outline btn-sm" target="_blank" rel="noopener">Edit profile in Admin</a>
+                        </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <div class="sa-ov-gateways">
+                    <span class="sa-ov-gate-label">Gateways</span>
+                    <span class="sa-chip <?php echo $smtpOn ? 'on' : 'off'; ?>">SMTP <?php echo $smtpOn ? 'ON' : 'OFF'; ?></span>
+                    <span class="sa-chip <?php echo $smsOn ? 'on' : 'off'; ?>">SMS <?php echo $smsOn ? 'ON' : 'OFF'; ?></span>
+                    <span class="sa-chip <?php echo $waOn ? 'on' : 'off'; ?>">WhatsApp <?php echo $waOn ? 'ON' : 'OFF'; ?></span>
+                    <span class="sa-ov-db"><?php echo e(ucfirst((string) $dbActiveProfile)); ?> DB</span>
                 </div>
             </div>
 
@@ -356,36 +444,36 @@ require_once 'includes/layout_header.php';
                     <span class="ssh-ico blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></span>
                     <h3>What Super Admin controls</h3>
                 </div>
-                <div class="sa-overview-links">
+                <div class="sa-overview-links sa-ov-links">
                     <a href="features.php">
-                        <strong>Plan &amp; Features</strong>
-                        <small>Which modules Admin, Teacher and Student can use</small>
+                        <span class="sa-ov-link-ico rose" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/></svg></span>
+                        <span><strong>Plan &amp; Features</strong><small>Which modules Admin, Teacher and Student can use</small></span>
                     </a>
                     <a href="license.php">
-                        <strong>School License</strong>
-                        <small>Active / Suspended, start date and expiry</small>
+                        <span class="sa-ov-link-ico slate" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>
+                        <span><strong>School License</strong><small>Active / Suspended, start date and expiry</small></span>
                     </a>
                     <a href="settings.php?tab=smtp">
-                        <strong>Email, SMS, WhatsApp</strong>
-                        <small>Gateways School Admin cannot change</small>
+                        <span class="sa-ov-link-ico blue" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></span>
+                        <span><strong>Email, SMS, WhatsApp</strong><small>Gateways School Admin cannot change</small></span>
                     </a>
                     <a href="settings.php?tab=backup">
-                        <strong>Backup &amp; Restore</strong>
-                        <small>SQL dump for this install</small>
+                        <span class="sa-ov-link-ico green" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                        <span><strong>Backup &amp; Restore</strong><small>SQL dump for this install</small></span>
                     </a>
                     <a href="settings.php?tab=database">
-                        <strong>Online &amp; Offline DB</strong>
-                        <small>Cloud and local XAMPP connection</small>
+                        <span class="sa-ov-link-ico orange" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>
+                        <span><strong>Online &amp; Offline DB</strong><small>Cloud and local XAMPP connection</small></span>
                     </a>
                     <a href="settings.php?tab=security">
-                        <strong>Security &amp; activity</strong>
-                        <small>Super Admin password and audit log</small>
+                        <span class="sa-ov-link-ico violet" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+                        <span><strong>Security &amp; activity</strong><small>Super Admin password and audit log</small></span>
                     </a>
                 </div>
             </div>
 
             <div class="settings-section">
-                <div class="settings-info">
+                <div class="settings-info sa-ov-info">
                     <span class="si-ico">i</span>
                     <p>
                         School name, logos, tagline and address are set in
@@ -710,11 +798,19 @@ require_once 'includes/layout_header.php';
             </div>
         </form>
 
-        <?php elseif ($tab === 'backup'): ?>
+        <?php elseif ($tab === 'backup'):
+            $bakWhen = static function (?string $dt): string {
+                if (!$dt) {
+                    return 'Never';
+                }
+                $ts = strtotime($dt);
+                return $ts ? date('d M Y, H:i', $ts) : $dt;
+            };
+        ?>
         <div class="settings-card">
             <div class="settings-card-head">
                 <div class="settings-title-block">
-                    <span class="settings-title-ico orange">
+                    <span class="settings-title-ico green">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     </span>
                     <div>
@@ -722,42 +818,117 @@ require_once 'includes/layout_header.php';
                         <p>Download a full SQL dump of this install, or restore from a previous dump.</p>
                     </div>
                 </div>
+                <span class="status-pill online">Full SQL dump</span>
             </div>
+
+            <div class="settings-section">
+                <div class="sa-bak-stats">
+                    <article>
+                        <span>Active database</span>
+                        <strong><?php echo e($bakDb); ?></strong>
+                    </article>
+                    <article>
+                        <span>Tables included</span>
+                        <strong><?php echo (int) $bakTables; ?></strong>
+                    </article>
+                    <article>
+                        <span>Last download</span>
+                        <strong><?php echo e($bakWhen($bakLastDownload)); ?></strong>
+                    </article>
+                    <article>
+                        <span>Last restore</span>
+                        <strong><?php echo e($bakWhen($bakLastRestore)); ?></strong>
+                    </article>
+                </div>
+            </div>
+
             <div class="settings-section sa-backup-grid">
-                <div class="sa-backup-card">
+                <div class="sa-backup-card is-safe">
+                    <div class="sa-backup-card-top">
+                        <span class="sa-backup-ico" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        </span>
+                        <span class="sa-backup-kicker">Safe</span>
+                    </div>
                     <h3>Download backup</h3>
-                    <p>Exports every table in the active database as a .sql file. Keep it somewhere safe off this server.</p>
+                    <p>Exports every table in the active database as a <code>.sql</code> file. Store it off this server.</p>
+                    <ul class="sa-bak-list">
+                        <li>Structure and data for all tables</li>
+                        <li>Filename like <code>schoolerp-backup-<?php echo date('Ymd-His'); ?>.sql</code></li>
+                        <li>Does not change anything on this install</li>
+                    </ul>
                     <form method="post">
                         <?php echo saCsrfField(); ?>
                         <input type="hidden" name="tab" value="backup">
-                        <button type="submit" name="action" value="download_backup" class="btn btn-primary">Download SQL backup</button>
+                        <button type="submit" name="action" value="download_backup" class="btn btn-primary sa-bak-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Download SQL backup
+                        </button>
                     </form>
                 </div>
                 <div class="sa-backup-card is-warn">
+                    <div class="sa-backup-card-top">
+                        <span class="sa-backup-ico" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        </span>
+                        <span class="sa-backup-kicker">Destructive</span>
+                    </div>
                     <h3>Restore backup</h3>
-                    <p>This replaces current data with the uploaded dump. Sign-ins and settings will match the backup.</p>
-                    <form method="post" enctype="multipart/form-data">
+                    <p>Replaces current data with the uploaded dump. Sign-ins, settings and school records will match the file.</p>
+                    <form method="post" enctype="multipart/form-data" class="sa-bak-restore">
                         <?php echo saCsrfField(); ?>
                         <input type="hidden" name="tab" value="backup">
-                        <div class="form-group">
-                            <label>SQL file</label>
+                        <label class="sa-bak-drop" id="saBakDrop">
                             <input type="file" name="backup_file" accept=".sql,text/plain,application/sql" required>
-                        </div>
-                        <label class="sa-check-label">
+                            <span class="sa-bak-drop-ico" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            </span>
+                            <strong>Drop a .sql file here</strong>
+                            <small>or click to browse · only dumps from this page</small>
+                            <em class="sa-bak-drop-name">No file selected</em>
+                        </label>
+                        <label class="sa-check-label sa-bak-confirm">
                             <input type="checkbox" name="confirm_restore" value="1" required>
                             I understand this overwrites the current database.
                         </label>
-                        <button type="submit" name="action" value="restore_backup" class="btn btn-outline" onclick="return confirm('Restore this backup and overwrite the current database?');">Restore now</button>
+                        <button type="submit" name="action" value="restore_backup" class="btn sa-bak-btn-danger" onclick="return confirm('Restore this backup and overwrite the current database?');">
+                            Restore now
+                        </button>
                     </form>
                 </div>
             </div>
             <div class="settings-section">
                 <div class="settings-info">
                     <span class="si-ico">i</span>
-                    <p>Restore only files created from this Backup page. Activity older than 90 days is removed automatically from the log, not from SQL backups.</p>
+                    <p>Restore only files created from this Backup page. Activity older than 90 days is removed automatically from the log, not from SQL backups. SuperAdmin stays available after a restore, but you may need to sign in again.</p>
                 </div>
             </div>
         </div>
+        <script>
+        (function () {
+            var drop = document.getElementById('saBakDrop');
+            if (!drop) return;
+            var input = drop.querySelector('input[type="file"]');
+            var nameEl = drop.querySelector('.sa-bak-drop-name');
+            function sync() {
+                var file = input.files && input.files[0];
+                nameEl.textContent = file ? file.name : 'No file selected';
+                drop.classList.toggle('has-file', !!file);
+            }
+            input.addEventListener('change', sync);
+            ['dragenter', 'dragover'].forEach(function (ev) {
+                drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('is-drag'); });
+            });
+            ['dragleave', 'drop'].forEach(function (ev) {
+                drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('is-drag'); });
+            });
+            drop.addEventListener('drop', function (e) {
+                if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+                input.files = e.dataTransfer.files;
+                sync();
+            });
+        })();
+        </script>
 
         <?php elseif ($tab === 'security'): ?>
         <div class="settings-card sa-security-card">
@@ -961,6 +1132,16 @@ if (activitySearch) {
         document.querySelectorAll('.sa-activity-row').forEach(function (row) {
             row.style.display = row.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
         });
+    });
+}
+var saNav = document.querySelector('.sa-settings .settings-nav');
+var saNavActive = saNav ? saNav.querySelector('.settings-nav-item.active') : null;
+if (saNav && saNavActive && window.matchMedia('(max-width: 980px)').matches) {
+    var navBox = saNav.getBoundingClientRect();
+    var itemBox = saNavActive.getBoundingClientRect();
+    saNav.scrollTo({
+        left: saNav.scrollLeft + (itemBox.left - navBox.left) - (navBox.width / 2) + (itemBox.width / 2),
+        behavior: 'auto'
     });
 }
 </script>
