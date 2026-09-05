@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Student Portal</string>
+    <string name="portal_url">https://schoolerp.softflipsolutions.com/portal/index.php</string>
+    <string name="offline_title">No internet</string>
+    <string name="offline_message">Check your connection and try again.</string>
+    <string name="retry">Retry</string>
+    <string name="exit_title">Exit app?</string>
+    <string name="exit_message">Do you want to close Student Portal?</string>
+    <string name="exit_yes">Exit</string>
+    <string name="exit_no">Stay</string>
+</resources>
